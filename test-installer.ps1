@@ -1,5 +1,25 @@
 param([string]$OutputDirectory = (Join-Path $PSScriptRoot 'build-tests\installer'))
 $ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+public static class UnicodeShortcutReader {
+    [ComImport, Guid("00021401-0000-0000-C000-000000000046")] private class ShellLink { }
+    [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IShellLinkW { void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int count, IntPtr data, int flags); }
+    public static string Read(string file) {
+        object link = new ShellLink();
+        try {
+            ((IPersistFile)link).Load(file, 0);
+            var text = new StringBuilder(32768);
+            ((IShellLinkW)link).GetPath(text, text.Capacity, IntPtr.Zero, 0);
+            return text.ToString();
+        } finally { Marshal.FinalReleaseComObject(link); }
+    }
+}
+'@
 & (Join-Path $PSScriptRoot 'build-installer.ps1') -OutputDirectory $OutputDirectory -TestInstall
 $target = Join-Path $OutputDirectory 'Папка пользователя\Check Update Test'
 $registryPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\CheckUpdateInstallerTest_is1'
@@ -23,9 +43,8 @@ try {
     if ($registration.InstallLocation.TrimEnd('\') -ne $target) { throw 'Selected installation directory was not preserved' }
     foreach ($shortcut in @($shortcutPath, $desktopPath)) {
         if (-not (Test-Path -LiteralPath $shortcut)) { throw 'Expected shortcut was not created' }
-        $shell = New-Object -ComObject WScript.Shell
-        $link = $shell.CreateShortcut($shortcut)
-        if ($link.TargetPath -ne $installedExe) { throw 'Shortcut target mismatch' }
+        $linkTarget = [UnicodeShortcutReader]::Read($shortcut)
+        if ($linkTarget -ne $installedExe) { throw ('Shortcut target mismatch. Actual: ' + $linkTarget + '; expected: ' + $installedExe) }
     }
     [IO.File]::WriteAllText((Join-Path $target 'Check Update.exe.previous'), 'test backup')
     Write-Output 'PASS per-user installation, payload hash, version registration, Start menu and desktop shortcuts'
