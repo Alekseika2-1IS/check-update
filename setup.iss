@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.5.0"
+  #define AppVersion "0.5.1"
 #endif
 #ifndef BuildDir
   #define BuildDir "dist"
@@ -29,7 +29,7 @@ WizardSizePercent=110
 SetupIconFile=assets\app.ico
 WizardSmallImageFile=assets\app.png
 DisableWelcomePage=yes
-DisableDirPage=yes
+DisableDirPage=no
 DisableProgramGroupPage=yes
 DisableReadyPage=no
 UsePreviousTasks=yes
@@ -71,6 +71,61 @@ FinishedLabelNoIcons=Готово! Check Update доступен в меню «�
 var
   DesktopShortcut: TNewCheckBox;
   InstallDescription: TNewStaticText;
+  DirectoryPageShown: Boolean;
+
+function GetProbeFileName(Path, Prefix: String; Unique: Cardinal; Buffer: String): Cardinal;
+  external 'GetTempFileNameW@kernel32.dll stdcall';
+
+function DirectoryAccessError(Directory: String): String;
+var
+  Existing, Parent, Probe: String;
+begin
+  Result := '';
+  Existing := RemoveBackslashUnlessRoot(Directory);
+  while not DirExists(Existing) do
+  begin
+    Parent := ExtractFileDir(Existing);
+    if (Parent = '') or (Parent = Existing) then
+    begin
+      Result := 'Выбранный диск или папка недоступны. Выберите другую папку.';
+      Exit;
+    end;
+    Existing := Parent;
+  end;
+  Probe := StringOfChar(#0, 260);
+  if GetProbeFileName(Existing, 'cup', 0, Probe) = 0 then
+  begin
+    Result := 'Нет доступа для записи в выбранную папку. Выберите папку, доступную вашему пользователю, например на диске D: или в вашей пользовательской папке.';
+    Exit;
+  end;
+  Probe := Copy(Probe, 1, Pos(#0, Probe) - 1);
+  if not DeleteFile(Probe) then
+    Result := 'Не удалось проверить доступ к выбранной папке. Выберите другую папку.';
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  Error: String;
+begin
+  Result := True;
+  if CurPageID = wpSelectDir then
+  begin
+    if Trim(WizardDirValue) = '' then
+      Error := 'Укажите папку установки вручную или выберите её кнопкой «Обзор».'
+    else
+      Error := DirectoryAccessError(WizardDirValue);
+    if Error <> '' then
+    begin
+      MsgBox(Error, mbError, MB_OK);
+      Result := False;
+    end;
+  end;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := DirectoryAccessError(ExpandConstant('{app}'));
+end;
 
 function InitializeSetup(): Boolean;
 begin
@@ -102,6 +157,13 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
+  if (CurPageID = wpSelectDir) and (not DirectoryPageShown) then
+  begin
+    DirectoryPageShown := True;
+    if (not WizardSilent) and (ExpandConstant('{param:DIR|}') = '') and
+       (not RegKeyExists(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#ProductId}_is1')) then
+      WizardForm.DirEdit.Text := '';
+  end;
   if CurPageID = wpReady then
     InstallDescription.Caption := 'Проверяйте обновления программ и устанавливайте новые версии в одном месте.' + #13#10 + #13#10 +
       'Установка только для вас — права администратора не требуются.' + #13#10 + #13#10 +

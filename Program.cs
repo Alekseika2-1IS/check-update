@@ -16,7 +16,7 @@ using System.Windows.Media.Imaging;
 
 [assembly: System.Reflection.AssemblyTitle("Check Update")]
 [assembly: System.Reflection.AssemblyProduct("Check Update")]
-[assembly: System.Reflection.AssemblyVersion("0.5.0.0")]
+[assembly: System.Reflection.AssemblyVersion("0.5.1.0")]
 
 namespace UpdateHub
 {
@@ -144,7 +144,7 @@ namespace UpdateHub
 
         public MainWindow(bool checkSelfUpdates = true)
         {
-            Title = "Check Update 0.5.0 — обновления программ"; Width = 1240; Height = 860; MinWidth = 1040; MinHeight = 740;
+            Title = "Check Update 0.5.1 — обновления программ"; Width = 1240; Height = 860; MinWidth = 1040; MinHeight = 740;
             var logo = new BitmapImage();
             using (var stream = typeof(MainWindow).Assembly.GetManifestResourceStream("CheckUpdate.Icon.png"))
             {

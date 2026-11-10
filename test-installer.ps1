@@ -1,7 +1,7 @@
 param([string]$OutputDirectory = (Join-Path $PSScriptRoot 'build-tests\installer'))
 $ErrorActionPreference = 'Stop'
 & (Join-Path $PSScriptRoot 'build-installer.ps1') -OutputDirectory $OutputDirectory -TestInstall
-$target = Join-Path $OutputDirectory 'installed-test'
+$target = Join-Path $OutputDirectory 'Папка пользователя\Check Update Test'
 $registryPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\CheckUpdateInstallerTest_is1'
 $shortcutPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'Check Update Installer Test.lnk'
 $desktopPath = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Check Update Installer Test.lnk'
@@ -18,7 +18,9 @@ try {
     if ((Get-FileHash -LiteralPath $installedExe).Hash -ne (Get-FileHash -LiteralPath (Join-Path $OutputDirectory 'Check Update.exe')).Hash) { throw 'Installed file hash mismatch' }
     if (-not (Test-Path -LiteralPath $registryPath)) { throw 'Uninstall entry was not created' }
     $registration = Get-ItemProperty -LiteralPath $registryPath
-    if ($registration.DisplayVersion -ne '0.5.0') { throw 'Incorrect installed version' }
+    $expectedVersion = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $OutputDirectory 'Check Update.exe')).Version.ToString(3)
+    if ($registration.DisplayVersion -ne $expectedVersion) { throw 'Incorrect installed version' }
+    if ($registration.InstallLocation.TrimEnd('\') -ne $target) { throw 'Selected installation directory was not preserved' }
     foreach ($shortcut in @($shortcutPath, $desktopPath)) {
         if (-not (Test-Path -LiteralPath $shortcut)) { throw 'Expected shortcut was not created' }
         $shell = New-Object -ComObject WScript.Shell
