@@ -1,0 +1,136 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+using UpdateHub;
+
+public static class Tests
+{
+    static int checks;
+    static void Check(bool condition, string label) { if (!condition) throw new Exception(label); checks++; Console.WriteLine("PASS " + label); }
+    static string Row(string name, string id, string version, string available) { return name.PadRight(25) + id.PadRight(30) + version.PadRight(18) + available; }
+    [STAThread]
+    public static void Main(string[] args)
+    {
+        string header = Row("Name", "Id", "Version", "Available") + "\n" + new string('-', 90) + "\n";
+        var parsed = Winget.Parse(header + Row("Пример приложения", "Vendor.Example", "< 2.0", "3.0") + "\n" + Row("Other", "Vendor.Other", "1.0", ""));
+        Check(parsed.Count == 2 && parsed.Any(p => p.Id == "Vendor.Example" && p.Available == "3.0" && p.Installed == "< 2.0"), "localized names and versions");
+        Check(parsed.Count(p => p.CanUpdate) == 1 && parsed.All(p => !p.Selected), "updates optional and unselected by default");
+        parsed = Winget.Parse(header + Row("Truncated", "Vendor.Long…", "1", "2") + "\n" + Row("Safe", "Vendor.Safe", "1", "2"));
+        Check(parsed.Count == 1 && parsed[0].Id == "Vendor.Safe", "clipped identifiers excluded");
+        parsed = Winget.Parse(header + Row("One", "Vendor.Same", "1", "") + "\n" + Row("One", "Vendor.Same", "1", "2"));
+        Check(parsed.Count == 1 && parsed[0].CanUpdate, "duplicate targets merged");
+        string three = "Name                     Id                            Version\n" + new string('-', 80) + "\n" + Row("Example", "Vendor.Example", "1", "");
+        Check(!Winget.Parse(three)[0].CanUpdate, "table without update column");
+        bool rejected = false; try { Winget.Parse("Unexpected response"); } catch (FormatException) { rejected = true; }
+        Check(rejected, "unexpected output fails visibly");
+        rejected = false; try { Winget.Quote("Vendor.App --all"); } catch (ArgumentException) { rejected = true; }
+        Check(rejected, "invalid target rejected");
+        int scans = 0; int waits = 0;
+        var verified = UpdateVerifier.VerifyAsync(new[] { "Vendor.App" }, () => {
+            scans++;
+            return Task.FromResult(new System.Collections.Generic.List<Package> { new Package { Id = "Vendor.App", Installed = scans == 1 ? "1" : "2", Available = scans == 1 ? "2" : "" } });
+        }, milliseconds => { waits++; return Task.FromResult(0); }).GetAwaiter().GetResult();
+        Check(scans == 2 && waits == 1 && verified.Pending == 0 && !verified.Packages[0].CanUpdate, "delayed Windows data refreshed automatically");
+        scans = 0;
+        verified = UpdateVerifier.VerifyAsync(new[] { "Vendor.App" }, () => {
+            scans++;
+            return Task.FromResult(new System.Collections.Generic.List<Package> { new Package { Id = "Vendor.App", Available = "2" } });
+        }, milliseconds => Task.FromResult(0)).GetAwaiter().GetResult();
+        Check(scans == 4 && verified.Pending == 1, "unconfirmed updates remain visible with bounded retries");
+        scans = 0;
+        verified = UpdateVerifier.VerifyAsync(new[] { "Vendor.App" }, () => {
+            scans++; throw new IOException("offline");
+        }, milliseconds => Task.FromResult(0)).GetAwaiter().GetResult();
+        Check(scans == 4 && verified.Packages == null && verified.Error != null, "scan failure does not fabricate successful removal");
+        scans = 0;
+        verified = UpdateVerifier.VerifyAsync(new[] { "Vendor.App" }, () => {
+            scans++;
+            if (scans == 1) throw new IOException("temporary");
+            return Task.FromResult(new System.Collections.Generic.List<Package> { new Package { Id = "Vendor.App", Installed = "2", Available = "" } });
+        }, milliseconds => Task.FromResult(0)).GetAwaiter().GetResult();
+        Check(scans == 2 && verified.Error == null && verified.Pending == 0, "temporary scan failure recovers");
+        Check(SelfUpdate.ParseVersion("v1.2.3") == new Version(1, 2, 3, 0) && SelfUpdate.ParseVersion("v1.2.3-beta") == null, "stable release version parsing");
+        Check(!SelfUpdate.IsTrustedAsset("https://github.com/other/app/releases/download/v1/a.exe") && !SelfUpdate.IsTrustedAsset("http://github.com/" + SelfUpdate.Repository + "/releases/download/v1/a.exe"), "foreign update sources rejected");
+        string releaseJson = "{\"tag_name\":\"v9.0.0\",\"draft\":false,\"prerelease\":false,\"assets\":[{\"name\":\"Check-Update.exe\",\"size\":100,\"browser_download_url\":\"https://github.com/" + SelfUpdate.Repository + "/releases/download/v9.0.0/Check-Update.exe\"},{\"name\":\"Check-Update.exe.sha256\",\"size\":64,\"browser_download_url\":\"https://github.com/" + SelfUpdate.Repository + "/releases/download/v9.0.0/Check-Update.exe.sha256\"}]}";
+        Check(SelfUpdate.ParseRelease(releaseJson, new Version(1, 0, 0, 0)) != null, "new release with expected assets detected");
+        Check(SelfUpdate.ParseRelease(releaseJson, new Version(9, 0, 0, 0)) == null && SelfUpdate.ParseRelease(releaseJson.Replace("\"prerelease\":false", "\"prerelease\":true"), new Version(1, 0)) == null, "current versions and previews ignored");
+        rejected = false; try { SelfUpdate.ParseRelease(releaseJson.Replace("Check-Update.exe.sha256", "wrong.txt"), new Version(1, 0)); } catch (InvalidDataException) { rejected = true; }
+        Check(rejected, "release missing checksum rejected");
+        string temp = Path.Combine(Path.GetTempPath(), "CheckUpdate-test-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(temp);
+        string source = Path.Combine(temp, "new.exe"), destination = Path.Combine(temp, "app.exe");
+        File.WriteAllText(source, "new version"); File.WriteAllText(destination, "old version");
+        bool started = false;
+        SelfUpdate.ReplaceAndRestart(source, destination, SelfUpdate.Hash(source), path => { started = File.ReadAllText(path) == "new version"; });
+        Check(started && File.ReadAllText(destination + ".previous") == "old version", "update replaces file and preserves previous version");
+        File.WriteAllText(destination, "restore this version");
+        try { SelfUpdate.ReplaceAndRestart(source, destination, SelfUpdate.Hash(source), path => { throw new IOException("restart failed"); }); } catch (IOException) { }
+        Check(File.ReadAllText(destination) == "restore this version", "restart failure restores previous executable");
+        rejected = false; try { SelfUpdate.ReplaceAndRestart(source, destination, new string('0', 64), path => { }); } catch (InvalidDataException) { rejected = true; }
+        Check(rejected && File.ReadAllText(destination) == "restore this version", "checksum mismatch leaves installed file intact");
+        File.Delete(source); File.Delete(destination); File.Delete(destination + ".previous"); Directory.Delete(temp);
+        bool offline = args.Contains("--offline");
+        var real = parsed;
+        if (!offline)
+        {
+            var result = Winget.Run("list --source winget --disable-interactivity", 120000);
+            Check(result.Code == 0, "real read-only winget scan");
+            real = Winget.Parse(result.Output);
+            Check(real.Count > 0, "real packages parsed");
+        }
+        Console.WriteLine("Recognized: " + real.Count + ", with updates: " + real.Count(p => p.CanUpdate));
+        var app = new Application();
+        var window = new MainWindow(false) { ShowActivated = false, Left = -10000, Top = -10000 };
+        window.Show();
+        System.Threading.SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(window.Dispatcher));
+        if (!offline)
+        {
+            var task = (Task)typeof(MainWindow).GetMethod("ScanAsync", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(window, null);
+            var frame = new DispatcherFrame();
+            task.ContinueWith(t => window.Dispatcher.BeginInvoke(new Action(() => frame.Continue = false)));
+            Dispatcher.PushFrame(frame);
+            task.GetAwaiter().GetResult();
+        }
+        else
+        {
+            typeof(MainWindow).GetMethod("ReplacePackages", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(window, new object[] { real });
+            typeof(MainWindow).GetMethod("ShowProgress", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(window, new object[] { "Проверка завершена", 1, 1, false });
+        }
+        var field = typeof(MainWindow).GetField("packages", BindingFlags.Instance | BindingFlags.NonPublic);
+        Check(((System.Collections.ICollection)field.GetValue(window)).Count > 0, "window completes asynchronous scan");
+        var items = (System.Collections.ObjectModel.ObservableCollection<Package>)field.GetValue(window);
+        var search = (System.Windows.Controls.TextBox)typeof(MainWindow).GetField("search", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
+        var view = System.Windows.Data.CollectionViewSource.GetDefaultView(items);
+        var target = items.First();
+        var onlyUpdates = (System.Windows.Controls.CheckBox)typeof(MainWindow).GetField("onlyUpdates", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
+        if (!items.Any(p => p.CanUpdate)) { onlyUpdates.IsChecked = false; view.Refresh(); }
+        else target = items.First(p => p.CanUpdate);
+        search.Text = target.Id.ToLowerInvariant();
+        Check(view.Cast<Package>().Count() == 1 && view.Cast<Package>().First().Id == target.Id, "search finds identifier regardless of case");
+        var select = (System.Windows.Controls.CheckBox)typeof(MainWindow).GetField("selectAll", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
+        select.IsChecked = true; select.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        Check(items.Count(p => p.Selected) == (target.CanUpdate ? 1 : 0) && target.Selected == target.CanUpdate, "select all only selects visible updateable results");
+        foreach (var p in items) p.Selected = false; select.IsChecked = false;
+        search.Text = "no-such-program-xyz";
+        Check(!view.Cast<Package>().Any(), "unmatched search returns empty view");
+        search.Clear();
+        Check(view.Cast<Package>().Count() == items.Count(p => onlyUpdates.IsChecked != true || p.CanUpdate), "clearing search restores active filter");
+        var meter = (System.Windows.Controls.ProgressBar)typeof(MainWindow).GetField("progress", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
+        Check(!meter.IsIndeterminate && meter.Value == meter.Maximum, "scan progress completes");
+        typeof(MainWindow).GetMethod("ShowProgress", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(window, new object[] { "Queue test", 1, 3, false });
+        Check(meter.Value == 1 && meter.Maximum == 3 && !meter.IsIndeterminate, "queue progress measures completed programs");
+        typeof(MainWindow).GetMethod("ShowProgress", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(window, new object[] { "Проверка завершена", 1, 1, false });
+        window.UpdateLayout();
+        var bitmap = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(window);
+        var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using (var stream = File.Create(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "preview.png"))) encoder.Save(stream);
+        window.Close(); app.Shutdown();
+        Console.WriteLine("All " + checks + " checks passed. No updates installed.");
+    }
+}

@@ -1,0 +1,383 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+
+[assembly: System.Reflection.AssemblyTitle("Check Update")]
+[assembly: System.Reflection.AssemblyProduct("Check Update")]
+[assembly: System.Reflection.AssemblyVersion("0.3.0.0")]
+
+namespace UpdateHub
+{
+    public class Package : INotifyPropertyChanged
+    {
+        public string Name { get; set; }
+        public string Id { get; set; }
+        public string Installed { get; set; }
+        public string Available { get; set; }
+        public bool CanUpdate { get { return !String.IsNullOrWhiteSpace(Available); } }
+        private bool selected;
+        public bool Selected { get { return selected; } set { selected = value; Changed("Selected"); } }
+        private string status;
+        public string Status { get { return status ?? (CanUpdate ? "Доступно обновление" : "Нет доступных обновлений"); } set { status = value; Changed("Status"); } }
+        public event PropertyChangedEventHandler PropertyChanged;
+        private void Changed(string property) { if (PropertyChanged != null) PropertyChanged(this, new PropertyChangedEventArgs(property)); }
+    }
+
+    public class CommandResult { public int Code; public string Output; public string Error; }
+
+    public class VerificationResult
+    {
+        public List<Package> Packages;
+        public int Pending;
+        public string Error;
+    }
+
+    public static class UpdateVerifier
+    {
+        public static async Task<VerificationResult> VerifyAsync(ICollection<string> updatedIds,
+            Func<Task<List<Package>>> scan, Func<int, Task> delay)
+        {
+            var result = new VerificationResult();
+            for (int attempt = 0; attempt < 4; attempt++)
+            {
+                if (attempt > 0) await delay(attempt * 3000);
+                try
+                {
+                    result.Packages = await scan();
+                    result.Error = null;
+                    result.Pending = updatedIds.Count(id => result.Packages.Any(p => String.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase) && p.CanUpdate));
+                    if (result.Pending == 0) return result;
+                }
+                catch (Exception ex) { result.Error = ex.Message; }
+            }
+            return result;
+        }
+    }
+
+    public static class Winget
+    {
+        public static CommandResult Run(string arguments, int timeout)
+        {
+            var info = new ProcessStartInfo("winget.exe", arguments) {
+                UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
+            };
+            using (var process = Process.Start(info))
+            {
+                var output = process.StandardOutput.ReadToEndAsync();
+                var error = process.StandardError.ReadToEndAsync();
+                if (!process.WaitForExit(timeout))
+                {
+                    process.Kill(); process.WaitForExit();
+                    throw new TimeoutException("Проверка заняла слишком много времени. Проверьте интернет и повторите попытку.");
+                }
+                Task.WaitAll(output, error);
+                return new CommandResult { Code = process.ExitCode, Output = output.Result, Error = error.Result };
+            }
+        }
+
+        public static List<Package> Parse(string output)
+        {
+            var clean = Regex.Replace(output, @"\x1B\[[0-?]*[ -/]*[@-~]", "");
+            var lines = clean.Replace("\r\n", "\n").Split('\n');
+            int separator = Array.FindIndex(lines, l => Regex.IsMatch(l.Trim(), @"^-{10,}$"));
+            if (separator < 1) throw new FormatException("Не удалось прочитать список программ. Подробности сохранены в журнале.");
+            var columns = Regex.Matches(lines[separator - 1], @"\S+(?: \S+)*").Cast<Match>().Select(m => m.Index).ToArray();
+            if (columns.Length < 3 || columns.Length > 5) throw new FormatException("Формат списка Windows не распознан.");
+            var packages = new List<Package>();
+            foreach (var line in lines.Skip(separator + 1))
+            {
+                if (line.Length <= columns[2]) continue;
+                Func<int, string> cell = i => line.Length <= columns[i] ? "" : line.Substring(columns[i], Math.Min(line.Length, i + 1 < columns.Length ? columns[i + 1] : line.Length) - columns[i]).Trim();
+                string id = cell(1);
+                // A clipped identifier must never become an update target.
+                if (!Regex.IsMatch(id, @"^[A-Za-z0-9][A-Za-z0-9._+\-]*$") || id.Length < 2) continue;
+                packages.Add(new Package { Name = cell(0), Id = id, Installed = cell(2), Available = columns.Length >= 4 ? cell(3) : "" });
+            }
+            if (packages.Count == 0) throw new FormatException("Windows вернула список, но прочитать программы не удалось.");
+            return packages.GroupBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.OrderByDescending(p => p.CanUpdate).First()).OrderBy(p => p.Name).ToList();
+        }
+
+        public static string Quote(string value)
+        {
+            if (!Regex.IsMatch(value, @"^[A-Za-z0-9][A-Za-z0-9._+\-]*$")) throw new ArgumentException("Некорректный идентификатор программы.");
+            return "\"" + value + "\"";
+        }
+    }
+
+    public class MainWindow : Window
+    {
+        private readonly ObservableCollection<Package> packages = new ObservableCollection<Package>();
+        private readonly DataGrid table = new DataGrid();
+        private readonly TextBlock status = new TextBlock();
+        private readonly TextBlock summary = new TextBlock();
+        private readonly Button scan = new Button();
+        private readonly Button update = new Button();
+        private readonly CheckBox onlyUpdates = new CheckBox();
+        private readonly CheckBox selectAll = new CheckBox();
+        private readonly TextBox search = new TextBox();
+        private readonly ProgressBar progress = new ProgressBar();
+        private readonly TextBlock progressText = new TextBlock();
+        private bool busy;
+        private bool installing;
+        private readonly Button appUpdate = new Button();
+        private readonly TextBlock appVersionStatus = new TextBlock();
+        private AppRelease availableRelease;
+        private bool checkingVersion;
+        private bool downloadingApp;
+        private string downloadedApp;
+        private readonly string logFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UpdateHub", "activity.log");
+
+        public MainWindow(bool checkSelfUpdates = true)
+        {
+            Title = "Check Update 0.3.0 — обновления программ"; Width = 1100; Height = 830; MinWidth = 850; MinHeight = 700;
+            var logo = new BitmapImage();
+            using (var stream = typeof(MainWindow).Assembly.GetManifestResourceStream("CheckUpdate.Icon.png"))
+            {
+                logo.BeginInit(); logo.CacheOption = BitmapCacheOption.OnLoad; logo.StreamSource = stream; logo.EndInit(); logo.Freeze();
+            }
+            Icon = logo;
+            WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            FontFamily = new FontFamily("Segoe UI"); FontSize = 14;
+            Background = new SolidColorBrush(Color.FromRgb(243, 246, 251));
+            var root = new DockPanel { Margin = new Thickness(28) }; Content = root;
+            var heading = new StackPanel { Margin = new Thickness(0, 0, 0, 22) };
+            var brand = new StackPanel { Orientation = Orientation.Horizontal };
+            brand.Children.Add(new Image { Source = logo, Width = 48, Height = 48, Margin = new Thickness(0, 0, 12, 0) });
+            brand.Children.Add(new TextBlock { Text = "Check Update", FontSize = 32, FontWeight = FontWeights.Bold, Foreground = Brushes.MidnightBlue, VerticalAlignment = VerticalAlignment.Center });
+            heading.Children.Add(brand);
+            heading.Children.Add(new TextBlock { Text = "Обновления ваших программ в одном месте", FontSize = 16, Margin = new Thickness(0, 5, 0, 12) });
+            heading.Children.Add(new TextBlock { Text = "Версия 0.3.0 • Windows 10/11 • каталог WinGet", Foreground = Brushes.DimGray });
+            DockPanel.SetDock(heading, Dock.Top); root.Children.Add(heading);
+            var footer = new StackPanel { Margin = new Thickness(0, 14, 0, 0) };
+            progressText.Text = "Готово к проверке"; progressText.Margin = new Thickness(0, 0, 0, 6);
+            footer.Children.Add(progressText);
+            progress.Height = 6; progress.Maximum = 1; progress.Margin = new Thickness(0, 0, 0, 10);
+            footer.Children.Add(progress);
+            status.Text = "Нажмите «Проверить обновления», чтобы получить список.";
+            status.TextWrapping = TextWrapping.Wrap; footer.Children.Add(status);
+            var logButton = new Button { Content = "Открыть журнал", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 10, 0, 0), Padding = new Thickness(10, 5, 10, 5) };
+            logButton.Click += (s, e) => { try { Log("Журнал открыт"); Process.Start("notepad.exe", "\"" + logFile + "\""); } catch (Exception ex) { ShowError(ex.Message); } };
+            footer.Children.Add(logButton);
+            var appUpdateRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
+            appUpdate.Content = "Проверить версию Check Update"; appUpdate.Padding = new Thickness(10, 6, 10, 6);
+            appUpdate.Click += async (s, e) => { if (availableRelease == null) await CheckAppVersionAsync(); else await DownloadAppAsync(); };
+            appUpdateRow.Children.Add(appUpdate);
+            appVersionStatus.Text = "Обновления приложения через GitHub";
+            appVersionStatus.VerticalAlignment = VerticalAlignment.Center; appVersionStatus.Margin = new Thickness(12, 0, 0, 0);
+            appUpdateRow.Children.Add(appVersionStatus); footer.Children.Add(appUpdateRow);
+            DockPanel.SetDock(footer, Dock.Bottom); root.Children.Add(footer);
+            var actions = new StackPanel { Margin = new Thickness(0, 0, 0, 14) };
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal };
+            scan.Content = "Проверить обновления"; scan.Padding = new Thickness(18, 10, 18, 10);
+            scan.Click += async (s, e) => await ScanAsync(); buttons.Children.Add(scan);
+            update.Content = "Обновить выбранное"; update.Padding = new Thickness(18, 10, 18, 10); update.Margin = new Thickness(12, 0, 0, 0);
+            update.Background = new SolidColorBrush(Color.FromRgb(36, 84, 205)); update.Foreground = Brushes.White;
+            update.IsEnabled = false; update.Click += async (s, e) => await UpdateAsync(); buttons.Children.Add(update);
+            actions.Children.Add(buttons);
+            var searchRow = new DockPanel { Margin = new Thickness(0, 14, 0, 0) };
+            var searchLabel = new TextBlock { Text = "Найти программу", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
+            DockPanel.SetDock(searchLabel, Dock.Left); searchRow.Children.Add(searchLabel);
+            var clearSearch = new Button { Content = "Очистить", Padding = new Thickness(12, 5, 12, 5), Margin = new Thickness(10, 0, 0, 0) };
+            clearSearch.Click += (s, e) => search.Clear(); DockPanel.SetDock(clearSearch, Dock.Right); searchRow.Children.Add(clearSearch);
+            search.Padding = new Thickness(8, 5, 8, 5); search.ToolTip = "Введите название программы или её идентификатор";
+            search.TextChanged += (s, e) => CollectionViewSource.GetDefaultView(packages).Refresh();
+            searchRow.Children.Add(search); actions.Children.Add(searchRow);
+            var filters = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 16, 0, 0) };
+            onlyUpdates.Content = "Только с обновлениями"; onlyUpdates.IsChecked = true;
+            onlyUpdates.Click += (s, e) => CollectionViewSource.GetDefaultView(packages).Refresh(); filters.Children.Add(onlyUpdates);
+            selectAll.Content = "Выбрать все показанные"; selectAll.Margin = new Thickness(24, 0, 0, 0);
+            selectAll.Click += (s, e) => { foreach (var p in packages.Where(MatchesFilter)) p.Selected = p.CanUpdate && selectAll.IsChecked == true; }; filters.Children.Add(selectAll);
+            actions.Children.Add(filters); summary.Margin = new Thickness(0, 12, 0, 0); actions.Children.Add(summary);
+            DockPanel.SetDock(actions, Dock.Top); root.Children.Add(actions);
+            table.ItemsSource = packages; table.AutoGenerateColumns = false; table.CanUserAddRows = false; table.CanUserDeleteRows = false;
+            table.RowHeaderWidth = 0; table.GridLinesVisibility = DataGridGridLinesVisibility.Horizontal;
+            table.HeadersVisibility = DataGridHeadersVisibility.Column; table.RowHeight = 42; table.ColumnHeaderHeight = 40;
+            table.Background = Brushes.White; table.BorderBrush = Brushes.LightGray; table.SelectionMode = DataGridSelectionMode.Single;
+            var checkFactory = new FrameworkElementFactory(typeof(CheckBox));
+            checkFactory.SetBinding(CheckBox.IsCheckedProperty, new Binding("Selected") { Mode = BindingMode.TwoWay, UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged });
+            checkFactory.SetBinding(CheckBox.IsEnabledProperty, new Binding("CanUpdate"));
+            checkFactory.SetValue(CheckBox.HorizontalAlignmentProperty, HorizontalAlignment.Center); checkFactory.SetValue(CheckBox.VerticalAlignmentProperty, VerticalAlignment.Center);
+            table.Columns.Add(new DataGridTemplateColumn { Header = "✓", Width = new DataGridLength(42), CellTemplate = new DataTemplate { VisualTree = checkFactory } });
+            AddColumn("Программа", "Name", 2.2); AddColumn("Установлено", "Installed", 1); AddColumn("Доступно", "Available", 1); AddColumn("Состояние", "Status", 1.7);
+            CollectionViewSource.GetDefaultView(packages).Filter = o => MatchesFilter((Package)o);
+            root.Children.Add(table);
+            Closing += (s, e) => { if (busy || downloadingApp) { e.Cancel = true; MessageBox.Show(this, downloadingApp ? "Дождитесь окончания скачивания обновления Check Update." : installing ? "Дождитесь окончания установки. Установщик может открыть отдельное окно." : "Дождитесь окончания проверки.", "Check Update"); } };
+            if (checkSelfUpdates) Loaded += async (s, e) => await CheckAppVersionAsync();
+        }
+
+        private void AddColumn(string heading, string path, double width)
+        {
+            table.Columns.Add(new DataGridTextColumn { Header = heading, Binding = new Binding(path), IsReadOnly = true, Width = new DataGridLength(width, DataGridLengthUnitType.Star) });
+        }
+
+        private void SetBusy(bool value)
+        {
+            busy = value; scan.IsEnabled = !value && !downloadingApp; update.IsEnabled = !value && !downloadingApp && packages.Any(p => p.CanUpdate);
+            appUpdate.IsEnabled = !value && !checkingVersion && !downloadingApp;
+            table.IsEnabled = !value; selectAll.IsEnabled = !value; onlyUpdates.IsEnabled = !value;
+            if (!value) progress.IsIndeterminate = false;
+        }
+
+        private bool MatchesFilter(Package package)
+        {
+            string query = search.Text.Trim();
+            return (onlyUpdates.IsChecked != true || package.CanUpdate)
+                && (query.Length == 0 || package.Name.IndexOf(query, StringComparison.CurrentCultureIgnoreCase) >= 0
+                    || package.Id.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private void ShowProgress(string text, int completed, int total, bool indeterminate)
+        {
+            progressText.Text = text; progress.Maximum = Math.Max(1, total);
+            progress.Value = completed; progress.IsIndeterminate = indeterminate;
+        }
+
+        private void Log(string text)
+        {
+            try { Directory.CreateDirectory(Path.GetDirectoryName(logFile)); File.AppendAllText(logFile, DateTime.Now.ToString("u") + " " + text + Environment.NewLine, Encoding.UTF8); } catch { }
+        }
+
+        private void ShowError(string message) { MessageBox.Show(this, message, "Check Update", MessageBoxButton.OK, MessageBoxImage.Information); }
+
+        private async Task CheckAppVersionAsync()
+        {
+            if (checkingVersion) return;
+            checkingVersion = true; appUpdate.IsEnabled = false; appVersionStatus.Text = "Проверяем новые версии…";
+            try
+            {
+                availableRelease = await SelfUpdate.CheckAsync();
+                appVersionStatus.Text = availableRelease == null ? "Новых опубликованных версий нет" : "Доступна версия " + SelfUpdate.ParseVersion(availableRelease.Tag).ToString(3);
+                appUpdate.Content = availableRelease == null ? "Проверить версию Check Update" : "↓ Скачать обновление Check Update";
+                appUpdate.Background = availableRelease == null ? SystemColors.ControlBrush : Brushes.LightGreen;
+            }
+            catch (Exception ex) { Log("Проверка версии приложения: " + ex); appVersionStatus.Text = "GitHub недоступен — можно проверить позже"; }
+            finally { checkingVersion = false; appUpdate.IsEnabled = !busy && !downloadingApp; }
+        }
+
+        private async Task DownloadAppAsync()
+        {
+            if (busy || downloadingApp || availableRelease == null) return;
+            downloadingApp = true; SetBusy(false); appVersionStatus.Text = "Скачиваем обновление…";
+            try
+            {
+                if (downloadedApp == null)
+                    downloadedApp = await SelfUpdate.DownloadAsync(availableRelease, new Progress<int>(percent => appVersionStatus.Text = "Скачивание Check Update: " + percent + "%"));
+                appVersionStatus.Text = "Обновление скачано и проверено"; appUpdate.Content = "Перезапустить и обновить";
+            }
+            catch (Exception ex) { Log("Скачивание приложения: " + ex); appVersionStatus.Text = "Скачать не удалось — повторите позже"; ShowError(ex.Message); }
+            finally { downloadingApp = false; SetBusy(false); }
+            if (downloadedApp != null && MessageBox.Show(this, "Обновление скачано и проверено. Перезапустить Check Update и применить его?", "Обновление Check Update", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            {
+                try { SelfUpdate.ScheduleInstall(downloadedApp); Application.Current.Shutdown(); }
+                catch (Exception ex) { Log(ex.ToString()); ShowError("Не удалось запустить обновление. " + ex.Message); }
+            }
+        }
+
+        private async Task<List<Package>> LoadPackagesAsync()
+        {
+            var result = await Task.Run(() => Winget.Run("list --source winget --disable-interactivity", 120000));
+            Log("Проверка: " + result.Code + "\n" + result.Output + "\n" + result.Error);
+            if (result.Code != 0) throw new InvalidOperationException("Windows не смогла проверить программы. Проверьте интернет и доступность WinGet. Подробности — в журнале.");
+            return Winget.Parse(result.Output);
+        }
+
+        private void ReplacePackages(List<Package> found)
+        {
+            packages.Clear(); foreach (var p in found) packages.Add(p); selectAll.IsChecked = false;
+            summary.Text = String.Format("Найдено программ: {0}    •    С обновлениями: {1}", packages.Count, packages.Count(p => p.CanUpdate));
+            CollectionViewSource.GetDefaultView(packages).Refresh();
+        }
+
+        private async Task ScanAsync()
+        {
+            SetBusy(true); status.Text = "Проверяем каталог Windows… Это может занять до двух минут.";
+            ShowProgress("Проверка доступных обновлений…", 0, 1, true);
+            try
+            {
+                ReplacePackages(await LoadPackagesAsync());
+                ShowProgress("Проверка завершена", 1, 1, false);
+                status.Text = "Проверка завершена. Показаны программы, распознанные каталогом WinGet. Отсутствие обновления в каталоге не гарантирует, что установлена последняя версия.";
+            }
+            catch (Win32Exception) { progressText.Text = "Проверка не завершена"; status.Text = "WinGet не найден. Установите или обновите «Установщик приложений» в Microsoft Store."; }
+            catch (Exception ex) { progressText.Text = "Проверка не завершена"; Log(ex.ToString()); status.Text = ex.Message; }
+            finally { SetBusy(false); }
+        }
+
+        private async Task UpdateAsync()
+        {
+            table.CommitEdit(); table.CommitEdit();
+            var chosen = packages.Where(p => p.Selected && p.CanUpdate).ToList();
+            if (chosen.Count == 0) { ShowError("Отметьте программы, которые хотите обновить."); return; }
+            string list = String.Join("\n", chosen.Select(p => "• " + p.Name + " → " + p.Available));
+            if (MessageBox.Show(this, "Обновить выбранные программы?\n\n" + list + "\n\nСохраните работу в этих программах. Продолжая, вы принимаете лицензионные условия выбранных обновлений. Установщики могут запросить права администратора.", "Подтверждение обновлений", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+            installing = true; SetBusy(true); int succeeded = 0; int failed = 0;
+            ShowProgress("Подготовка обновлений…", 0, chosen.Count, false);
+            var successfulIds = new List<string>();
+            var failedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                foreach (var p in chosen)
+                {
+                    p.Status = "Установка…"; status.Text = "Обновляем: " + p.Name + ". Если открылся установщик, завершите его шаги.";
+                    ShowProgress(String.Format("Программа {0} из {1}: {2} — установка…", succeeded + failed + 1, chosen.Count, p.Name), succeeded + failed, chosen.Count, false);
+                    try
+                    {
+                        var result = await Task.Run(() => Winget.Run("upgrade --id " + Winget.Quote(p.Id) + " --exact --source winget --interactive --accept-package-agreements --disable-interactivity", -1));
+                        Log("Обновление " + p.Id + ": " + result.Code + "\n" + result.Output + "\n" + result.Error);
+                        bool ok = result.Code == 0;
+                        p.Status = ok ? "Установлено — сверяем версии…" : "Не завершено — см. журнал";
+                        if (ok) { succeeded++; successfulIds.Add(p.Id); }
+                        else { failed++; failedIds.Add(p.Id); }
+                    }
+                    catch (Exception ex) { failed++; failedIds.Add(p.Id); p.Status = "Ошибка — см. журнал"; Log(ex.ToString()); }
+                    p.Selected = false;
+                    ShowProgress(String.Format("Обработано программ: {0} из {1}", succeeded + failed, chosen.Count), succeeded + failed, chosen.Count, false);
+                }
+                selectAll.IsChecked = false;
+                installing = false;
+                status.Text = "Установка завершена. Автоматически сверяем версии… Если Windows ещё не обновила данные, проверка повторится.";
+                ShowProgress("Установка завершена — сверка версий…", chosen.Count, chosen.Count, true);
+                var verification = await UpdateVerifier.VerifyAsync(successfulIds, LoadPackagesAsync, milliseconds => Task.Delay(milliseconds));
+                if (verification.Packages != null)
+                {
+                    ReplacePackages(verification.Packages);
+                    foreach (var p in packages)
+                    {
+                        if (failedIds.Contains(p.Id)) p.Status = "Не завершено — см. журнал";
+                        else if (successfulIds.Contains(p.Id) && p.CanUpdate) p.Status = "Обновление всё ещё доступно";
+                    }
+                }
+                string outcome = String.Format("Успешно: {0}. Не завершено: {1}. ", succeeded, failed);
+                if (verification.Error != null)
+                {
+                    Log("Автоматическая проверка: " + verification.Error);
+                    status.Text = outcome + "Не удалось подтвердить итоговые версии. " + (verification.Packages == null ? "Список сохранён прежним. " : "Показана последняя успешная проверка. ") + "Повторите проверку позднее.";
+                }
+                else status.Text = outcome + "Список обновлён автоматически." + (verification.Pending > 0 ? " Для некоторых программ обновление по-прежнему доступно — Windows могла ещё не обновить данные или установщик не применил новую версию." : "");
+                ShowProgress(verification.Error != null ? "Установка завершена; итоговые версии не подтверждены" : "Готово — список обновлён", chosen.Count, chosen.Count, false);
+            }
+            finally { installing = false; SetBusy(false); }
+        }
+    }
+
+    public static class Program
+    {
+        [STAThread]
+        public static void Main(string[] args) { if (!SelfUpdate.RunHelper(args)) new Application().Run(new MainWindow()); }
+    }
+}
