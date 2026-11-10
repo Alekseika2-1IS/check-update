@@ -14,6 +14,17 @@ public static class Tests
     static int checks;
     static void Check(bool condition, string label) { if (!condition) throw new Exception(label); checks++; Console.WriteLine("PASS " + label); }
     static string Row(string name, string id, string version, string available) { return name.PadRight(25) + id.PadRight(30) + version.PadRight(18) + available; }
+    static void Capture(MainWindow window, string name)
+    {
+        window.UpdateLayout();
+        window.Dispatcher.Invoke(DispatcherPriority.ContextIdle, new Action(() => { }));
+        window.UpdateLayout();
+        var content = (FrameworkElement)window.Content;
+        var bitmap = new RenderTargetBitmap((int)content.ActualWidth, (int)content.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(content);
+        var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using (var stream = File.Create(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, name))) encoder.Save(stream);
+    }
     [STAThread]
     public static void Main(string[] args)
     {
@@ -88,6 +99,7 @@ public static class Tests
         var window = new MainWindow(false) { ShowActivated = false, Left = -10000, Top = -10000 };
         window.Show();
         System.Threading.SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(window.Dispatcher));
+        Capture(window, "preview-empty.png");
         if (!offline)
         {
             var task = (Task)typeof(MainWindow).GetMethod("ScanAsync", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(window, null);
@@ -115,9 +127,12 @@ public static class Tests
         var select = (System.Windows.Controls.CheckBox)typeof(MainWindow).GetField("selectAll", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
         select.IsChecked = true; select.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
         Check(items.Count(p => p.Selected) == (target.CanUpdate ? 1 : 0) && target.Selected == target.CanUpdate, "select all only selects visible updateable results");
+        var selectedCounter = (System.Windows.Controls.TextBlock)typeof(MainWindow).GetField("selectedCount", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
+        Check(selectedCounter.Text == items.Count(p => p.Selected).ToString(), "selected counter follows selection through search");
         foreach (var p in items) p.Selected = false; select.IsChecked = false;
         search.Text = "no-such-program-xyz";
         Check(!view.Cast<Package>().Any(), "unmatched search returns empty view");
+        Capture(window, "preview-search-empty.png");
         search.Clear();
         Check(view.Cast<Package>().Count() == items.Count(p => onlyUpdates.IsChecked != true || p.CanUpdate), "clearing search restores active filter");
         var meter = (System.Windows.Controls.ProgressBar)typeof(MainWindow).GetField("progress", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
@@ -125,11 +140,9 @@ public static class Tests
         typeof(MainWindow).GetMethod("ShowProgress", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(window, new object[] { "Queue test", 1, 3, false });
         Check(meter.Value == 1 && meter.Maximum == 3 && !meter.IsIndeterminate, "queue progress measures completed programs");
         typeof(MainWindow).GetMethod("ShowProgress", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(window, new object[] { "Проверка завершена", 1, 1, false });
-        window.UpdateLayout();
-        var bitmap = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32);
-        bitmap.Render(window);
-        var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
-        using (var stream = File.Create(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "preview.png"))) encoder.Save(stream);
+        Capture(window, "preview.png");
+        window.Width = window.MinWidth; window.Height = window.MinHeight;
+        Capture(window, "preview-small.png");
         window.Close(); app.Shutdown();
         Console.WriteLine("All " + checks + " checks passed. No updates installed.");
     }
