@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.5.2"
+  #define AppVersion "0.5.3"
 #endif
 #ifndef BuildDir
   #define BuildDir "dist"
@@ -137,6 +137,7 @@ end;
 procedure InitializeWizard();
 begin
   WizardForm.ReadyMemo.Visible := False;
+  WizardForm.ReadyMemo.TabStop := False;
   WizardForm.ReadyLabel.Visible := False;
   InstallDescription := TNewStaticText.Create(WizardForm);
   InstallDescription.Parent := WizardForm.ReadyPage;
@@ -165,11 +166,15 @@ begin
       WizardForm.DirEdit.Text := '';
   end;
   if CurPageID = wpReady then
+  begin
+    WizardForm.ReadyMemo.Visible := False;
+    WizardForm.ReadyLabel.Visible := False;
     InstallDescription.Caption := 'Проверяйте обновления программ и устанавливайте новые версии в одном месте.' + #13#10 + #13#10 +
       'Установка только для вас — права администратора не требуются.' + #13#10 + #13#10 +
       'Приложение появится в меню «Пуск». Удалить его можно через настройки Windows.' + #13#10 + #13#10 +
       'Папка установки:' + #13#10 + ExpandConstant('{app}') + #13#10 + #13#10 +
       'Нажмите «Установить», чтобы продолжить.';
+  end;
 end;
 
 function DesktopShortcutWanted(): Boolean;
