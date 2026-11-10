@@ -97,6 +97,25 @@ namespace UpdateHub
             return hash != null && System.Text.RegularExpressions.Regex.IsMatch(hash, "^[0-9a-fA-F]{64}$");
         }
 
+        public static void SyncInstalledVersion(string executable)
+        {
+            // Portable copies must never modify the installed application's entry.
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\CheckUpdate_is1", true))
+                {
+                    if (key == null) return;
+                    string directory = key.GetValue("InstallLocation") as string;
+                    if (String.IsNullOrWhiteSpace(directory)) return;
+                    if (!String.Equals(Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar), Path.GetDirectoryName(Path.GetFullPath(executable)), StringComparison.OrdinalIgnoreCase)) return;
+                    key.SetValue("DisplayVersion", System.Reflection.AssemblyName.GetAssemblyName(executable).Version.ToString(3));
+                }
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            catch (System.Security.SecurityException) { }
+        }
+
         public static async Task<string> DownloadAsync(AppRelease release, IProgress<int> progress)
         {
             var asset = release.Assets.Single(a => a.Name == AssetName);

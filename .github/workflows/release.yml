@@ -15,13 +15,18 @@ jobs:
       - name: Build and test without changing installed apps
         shell: pwsh
         run: ./test.ps1 -Offline
+      - name: Test per-user installation and uninstallation
+        shell: pwsh
+        run: ./test-installer.ps1
       - name: Prepare portable release
         shell: pwsh
         run: |
-          ./build.ps1
+          ./build-installer.ps1
           Copy-Item -LiteralPath 'dist/Check Update.exe' -Destination 'dist/Check-Update.exe'
           $hash = (Get-FileHash -LiteralPath 'dist/Check-Update.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
           [IO.File]::WriteAllText((Join-Path $PWD 'dist/Check-Update.exe.sha256'), "$hash  Check-Update.exe`n", [Text.Encoding]::ASCII)
+          $setupHash = (Get-FileHash -LiteralPath 'dist/Check-Update-Setup.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText((Join-Path $PWD 'dist/Check-Update-Setup.exe.sha256'), "$setupHash  Check-Update-Setup.exe`n", [Text.Encoding]::ASCII)
           if ($env:GITHUB_REF_TYPE -eq 'tag') {
             $version = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $PWD 'dist/Check-Update.exe')).Version
             if ($env:GITHUB_REF_NAME -ne ('v' + $version.ToString(3))) { throw 'Tag does not match executable version' }
@@ -32,6 +37,8 @@ jobs:
           path: |
             dist/Check-Update.exe
             dist/Check-Update.exe.sha256
+            dist/Check-Update-Setup.exe
+            dist/Check-Update-Setup.exe.sha256
   publish:
     if: startsWith(github.ref, 'refs/tags/')
     needs: build
@@ -49,4 +56,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create $env:RELEASE_TAG 'release/Check-Update.exe' 'release/Check-Update.exe.sha256' --verify-tag --title "Check Update $env:RELEASE_TAG" --notes-file RELEASE_NOTES.md
+        run: gh release create $env:RELEASE_TAG 'release/Check-Update.exe' 'release/Check-Update.exe.sha256' 'release/Check-Update-Setup.exe' 'release/Check-Update-Setup.exe.sha256' --verify-tag --title "Check Update $env:RELEASE_TAG" --notes-file RELEASE_NOTES.md
