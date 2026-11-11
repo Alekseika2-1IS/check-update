@@ -16,7 +16,7 @@ using System.Windows.Media.Imaging;
 
 [assembly: System.Reflection.AssemblyTitle("Check Update")]
 [assembly: System.Reflection.AssemblyProduct("Check Update")]
-[assembly: System.Reflection.AssemblyVersion("0.7.2.0")]
+[assembly: System.Reflection.AssemblyVersion("0.7.3.0")]
 
 namespace UpdateHub
 {
@@ -151,7 +151,10 @@ namespace UpdateHub
         private string downloadedApp;
         private readonly string logFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UpdateHub", "activity.log");
 
-        public MainWindow(bool checkSelfUpdates = true)
+        private const string SettingsKey = @"Software\CheckUpdate";
+        private const string ScanOnStartupSetting = "ScanOnStartup";
+
+        public MainWindow(bool runStartupChecks = true)
         {
             Title = "Check Update " + SelfUpdate.CurrentVersion.ToString(3) + " — обновления программ"; Width = 1240; Height = 860; MinWidth = 1040; MinHeight = 740;
             var logo = new BitmapImage();
@@ -163,7 +166,44 @@ namespace UpdateHub
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             BuildLayout(logo);
             Closing += (s, e) => { if (busy || downloadingApp) { e.Cancel = true; MessageBox.Show(this, downloadingApp ? "Дождитесь окончания скачивания обновления Check Update." : installing ? "Дождитесь окончания установки. Установщик может открыть отдельное окно." : "Дождитесь окончания проверки.", "Check Update"); } };
-            if (checkSelfUpdates) Loaded += async (s, e) => await CheckAppVersionAsync();
+            if (runStartupChecks) Loaded += RunStartupChecks;
+        }
+
+        private async void RunStartupChecks(object sender, RoutedEventArgs e)
+        {
+            Loaded -= RunStartupChecks;
+            Task programsCheck = scanOnStartup.IsChecked == true ? ScanAsync() : Task.FromResult(0);
+            await Task.WhenAll(programsCheck, CheckAppVersionAsync());
+        }
+
+        private bool LoadScanOnStartup()
+        {
+            try
+            {
+                using (var settings = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(SettingsKey))
+                    return settings != null && Object.Equals(settings.GetValue(ScanOnStartupSetting), 1);
+            }
+            catch (Exception ex)
+            {
+                Log("Не удалось прочитать настройку автопроверки: " + ex.Message);
+                return false;
+            }
+        }
+
+        private void SaveScanOnStartup()
+        {
+            bool enabled = scanOnStartup.IsChecked == true;
+            try
+            {
+                using (var settings = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(SettingsKey))
+                    settings.SetValue(ScanOnStartupSetting, enabled ? 1 : 0, Microsoft.Win32.RegistryValueKind.DWord);
+            }
+            catch (Exception ex)
+            {
+                scanOnStartup.IsChecked = !enabled;
+                Log("Не удалось сохранить настройку автопроверки: " + ex.Message);
+                ShowError("Не удалось сохранить настройку автопроверки.");
+            }
         }
 
         private void AddColumn(string heading, string path, double width)

@@ -39,6 +39,7 @@ namespace UpdateHub
         private readonly UpdateHistory updateHistory = new UpdateHistory(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UpdateHub", "history.jsonl"));
         private bool historyWriteFailed;
         private readonly Button skipVersion = new Button { Content = "Пропустить версию", IsEnabled = false };
+        private readonly CheckBox scanOnStartup = new CheckBox();
         private const string SkippedVersionsKey = @"Software\CheckUpdate\SkippedVersions";
         private static Brush Paint(string hex) { return new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)); }
         [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
@@ -128,7 +129,14 @@ namespace UpdateHub
                 RefreshHistory(); refreshNavigation();
             };
             navigation.Children.Add(updatesLink); navigation.Children.Add(allLink); navigation.Children.Add(historyLink);
-            var catalogNote = Label("Проверка программ\nчерез каталог Windows", 11, "#758EAE"); catalogNote.Margin = new Thickness(0, 24, 0, 0); navigation.Children.Add(catalogNote);
+            var settingsLabel = Label("НАСТРОЙКИ", 10, "#758EAE");
+            settingsLabel.Margin = new Thickness(0, 24, 0, 10);
+            navigation.Children.Add(settingsLabel);
+            scanOnStartup.Content = Label("Проверять обновления\nпри запуске", 11, "#A0B0C6");
+            scanOnStartup.IsChecked = LoadScanOnStartup();
+            scanOnStartup.ToolTip = "При открытии Check Update загрузится список доступных обновлений программ.";
+            scanOnStartup.Click += (s, e) => SaveScanOnStartup();
+            navigation.Children.Add(scanOnStartup);
             sidebar.Children.Add(navigation);
 
             var heading = new DockPanel { Margin = new Thickness(0, 0, 0, 22) };

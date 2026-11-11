@@ -115,17 +115,29 @@ public static class Tests
         }
         Console.WriteLine("Recognized: " + real.Count + ", with updates: " + real.Count(p => p.CanUpdate));
         var app = new Application();
-        var window = new MainWindow(false) { ShowActivated = false, Left = -10000, Top = -10000 };
-        window.Show();
+        var window = new MainWindow(!offline) { ShowActivated = false, Left = -10000, Top = -10000 };
+        if (!offline)
+        {
+            var startup = (System.Windows.Controls.CheckBox)typeof(MainWindow).GetField("scanOnStartup", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
+            startup.IsChecked = true;
+        }
         System.Threading.SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(window.Dispatcher));
+        window.Show();
         Capture(window, "preview-empty.png");
         if (!offline)
         {
-            var task = (Task)typeof(MainWindow).GetMethod("ScanAsync", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(window, null);
             var frame = new DispatcherFrame();
-            task.ContinueWith(t => window.Dispatcher.BeginInvoke(new Action(() => frame.Continue = false)));
+            var busyField = typeof(MainWindow).GetField("busy", BindingFlags.Instance | BindingFlags.NonPublic);
+            var deadline = DateTime.UtcNow.AddSeconds(130);
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+            timer.Tick += (sender, e) =>
+            {
+                if (!(bool)busyField.GetValue(window) || DateTime.UtcNow >= deadline) frame.Continue = false;
+            };
+            timer.Start();
             Dispatcher.PushFrame(frame);
-            task.GetAwaiter().GetResult();
+            timer.Stop();
+            Check(!(bool)busyField.GetValue(window), "startup scan finishes");
         }
         else
         {
@@ -133,7 +145,7 @@ public static class Tests
             typeof(MainWindow).GetMethod("ShowProgress", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(window, new object[] { "Проверка завершена", 1, 1, false });
         }
         var field = typeof(MainWindow).GetField("packages", BindingFlags.Instance | BindingFlags.NonPublic);
-        Check(((System.Collections.ICollection)field.GetValue(window)).Count > 0, "window completes asynchronous scan");
+        Check(((System.Collections.ICollection)field.GetValue(window)).Count > 0, offline ? "window displays offline fixture" : "startup scan fills the list without a manual check");
         var items = (System.Collections.ObjectModel.ObservableCollection<Package>)field.GetValue(window);
         var search = (System.Windows.Controls.TextBox)typeof(MainWindow).GetField("search", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
         var view = System.Windows.Data.CollectionViewSource.GetDefaultView(items);
