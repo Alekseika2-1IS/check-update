@@ -46,7 +46,7 @@ namespace UpdateHub
 
         private static Border Card(UIElement child, string color, Thickness padding)
         {
-            return new Border { Child = child, Background = Paint(color), BorderBrush = Paint("#263951"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Padding = padding };
+            return new Border { Child = child, Background = Paint(color), BorderBrush = Paint("#29354A"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Padding = padding };
         }
 
         private static TextBlock Label(string text, double size, string color)
@@ -57,46 +57,58 @@ namespace UpdateHub
         private static Border Metric(TextBlock value, string caption, string accent)
         {
             var panel = new StackPanel();
-            value.Text = "—"; value.FontSize = 30; value.FontWeight = FontWeights.SemiBold; value.Foreground = Paint(accent);
+            panel.Children.Add(Label(caption, 12, "#B5C2D6"));
+            value.Text = "—";
+            value.FontSize = 30;
+            value.FontWeight = FontWeights.SemiBold;
+            value.Foreground = Paint(accent);
+            value.Margin = new Thickness(0, 4, 0, 0);
             panel.Children.Add(value);
-            var label = Label(caption, 12, "#A0B0C6"); label.Margin = new Thickness(0, 4, 0, 0); panel.Children.Add(label);
-            return Card(panel, "#111F33", new Thickness(18, 12, 18, 12));
+            var card = Card(panel, "#151E2E", new Thickness(16, 12, 16, 12));
+            card.Background = new LinearGradientBrush(
+                (Color)ColorConverter.ConvertFromString("#1A2639"),
+                (Color)ColorConverter.ConvertFromString("#131C2B"), 35);
+            return card;
         }
 
         private void BuildLayout(ImageSource logo)
         {
             using (var stream = typeof(MainWindow).Assembly.GetManifestResourceStream("CheckUpdate.Theme.xaml"))
                 Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Load(stream));
-            Background = Paint("#0A1423"); Foreground = Paint("#EDF4FC");
+            Background = Paint("#0E1420"); Foreground = Paint("#EDF4FC");
             FontFamily = new FontFamily("Segoe UI"); FontSize = 13;
             SourceInitialized += (s, e) => { try { int dark = 1; DwmSetWindowAttribute(new WindowInteropHelper(this).Handle, 20, ref dark, 4); } catch (DllNotFoundException) { } catch (EntryPointNotFoundException) { } };
 
             var shell = new Grid { Background = Background }; shell.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(218) }); shell.ColumnDefinitions.Add(new ColumnDefinition()); Content = shell;
             var sidebar = new DockPanel { Margin = new Thickness(20, 26, 20, 22) };
-            var sidebarSurface = new Border { Background = Paint("#0D1A2C"), BorderBrush = Paint("#21334B"), BorderThickness = new Thickness(0, 0, 1, 0), Child = sidebar };
+            var sidebarSurface = new Border { Background = Paint("#111A29"), BorderBrush = Paint("#29354A"), BorderThickness = new Thickness(0, 0, 1, 0), Child = sidebar };
             shell.Children.Add(sidebarSurface);
 
-            var brand = new StackPanel { Margin = new Thickness(0, 0, 0, 30) };
-            brand.Children.Add(new Image { Source = logo, Width = 54, Height = 54, HorizontalAlignment = HorizontalAlignment.Left });
-            var name = Label("Check Update", 22, "#F2F7FF"); name.FontWeight = FontWeights.SemiBold; name.Margin = new Thickness(0, 14, 0, 5); brand.Children.Add(name);
-            brand.Children.Add(Label("Обновления\nпод контролем", 12, "#94A9C3"));
+            var brand = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 30) };
+            brand.Children.Add(new Image { Source = logo, Width = 38, Height = 38 });
+            var name = Label("Check Update", 18, "#F2F7FF");
+            name.FontWeight = FontWeights.SemiBold;
+            name.VerticalAlignment = VerticalAlignment.Center;
+            name.Margin = new Thickness(10, 0, 0, 0);
+            brand.Children.Add(name);
             DockPanel.SetDock(brand, Dock.Top); sidebar.Children.Add(brand);
 
             var appCardContent = new StackPanel();
-            var appCaption = Label("↻  CHECK UPDATE", 11, "#56D7EF"); appCaption.FontWeight = FontWeights.SemiBold; appCardContent.Children.Add(appCaption);
-            var version = Label("Версия " + SelfUpdate.CurrentVersion.ToString(3), 16, "#EDF4FC"); version.Margin = new Thickness(0, 10, 0, 8); appCardContent.Children.Add(version);
+            var version = Label("Версия " + SelfUpdate.CurrentVersion.ToString(3), 15, "#EDF4FC");
+            version.FontWeight = FontWeights.SemiBold;
+            version.Margin = new Thickness(0, 0, 0, 8);
+            appCardContent.Children.Add(version);
             appVersionStatus.Text = "Обновления приложения через GitHub"; appVersionStatus.TextWrapping = TextWrapping.Wrap; appVersionStatus.FontSize = 12; appVersionStatus.Foreground = Paint("#A0B0C6"); appVersionStatus.Margin = new Thickness(0, 0, 0, 12);
             appCardContent.Children.Add(appVersionStatus);
             appUpdate.Content = "Проверить версию"; appUpdate.Padding = new Thickness(8, 10, 8, 10); appUpdate.FontSize = 12;
             appUpdate.Click += async (s, e) => { if (availableRelease == null) await CheckAppVersionAsync(); else await DownloadAppAsync(); };
             appCardContent.Children.Add(appUpdate);
-            var appCard = Card(appCardContent, "#14243A", new Thickness(13)); DockPanel.SetDock(appCard, Dock.Bottom); sidebar.Children.Add(appCard);
+            var appCard = Card(appCardContent, "#172234", new Thickness(13)); DockPanel.SetDock(appCard, Dock.Bottom); sidebar.Children.Add(appCard);
 
             var navigation = new StackPanel();
-            navigation.Children.Add(Label("РАБОЧАЯ ОБЛАСТЬ", 10, "#758EAE"));
             var updatesLink = new Button { Content = "↻   Обновления", HorizontalContentAlignment = HorizontalAlignment.Left, Background = Paint("#123B50"), BorderBrush = Paint("#20617B"), Margin = new Thickness(0, 12, 0, 8) };
-            var allLink = new Button { Content = "▤   Все программы", Background = Brushes.Transparent, BorderBrush = Brushes.Transparent };
-            var historyLink = new Button { Content = "◷   История", Background = Brushes.Transparent, BorderBrush = Brushes.Transparent, Margin = new Thickness(0, 8, 0, 0) };
+            var allLink = new Button { Content = "▤   Все программы", HorizontalContentAlignment = HorizontalAlignment.Left, Background = Brushes.Transparent, BorderBrush = Brushes.Transparent };
+            var historyLink = new Button { Content = "◷   История", HorizontalContentAlignment = HorizontalAlignment.Left, Background = Brushes.Transparent, BorderBrush = Brushes.Transparent, Margin = new Thickness(0, 8, 0, 0) };
             var main = new DockPanel { Margin = new Thickness(28, 26, 28, 22) };
             Grid.SetColumn(main, 1); shell.Children.Add(main);
             BuildHistoryPage();
@@ -105,6 +117,7 @@ namespace UpdateHub
             {
                 button.Background = selected ? Paint("#123B50") : Brushes.Transparent;
                 button.BorderBrush = selected ? Paint("#20617B") : Brushes.Transparent;
+                button.Foreground = selected ? Paint("#89E9FC") : Paint("#B5C2D6");
             };
             Action refreshNavigation = () => {
                 bool filtered = onlyUpdates.IsChecked == true;
@@ -139,16 +152,20 @@ namespace UpdateHub
             navigation.Children.Add(scanOnStartup);
             sidebar.Children.Add(navigation);
 
-            var heading = new DockPanel { Margin = new Thickness(0, 0, 0, 22) };
+            var heading = new DockPanel { Margin = new Thickness(0, 0, 0, 20) };
             scan.Content = "↻  Проверить обновления"; scan.Padding = new Thickness(16, 12, 16, 12); scan.VerticalAlignment = VerticalAlignment.Center;
+            scan.Background = Paint("#79DFF4");
+            scan.Foreground = Paint("#102332");
+            scan.BorderBrush = Paint("#79DFF4");
             scan.Click += async (s, e) => await ScanAsync(); DockPanel.SetDock(scan, Dock.Right); heading.Children.Add(scan);
             var headingText = new StackPanel();
-            headingText.Children.Add(Label("ВАШ КОМПЬЮТЕР", 10, "#5FCBE7"));
-            var title = Label("Обновления программ", 27, "#F2F7FF"); title.FontWeight = FontWeights.SemiBold; title.Margin = new Thickness(0, 5, 12, 4); headingText.Children.Add(title);
-            headingText.Children.Add(Label("Новые версии — в одном месте", 12, "#9CAFC7"));
+            var title = Label("Обновления программ", 29, "#F2F7FF");
+            title.FontWeight = FontWeights.SemiBold;
+            title.Margin = new Thickness(0, 2, 12, 2);
+            headingText.Children.Add(title);
             heading.Children.Add(headingText); DockPanel.SetDock(heading, Dock.Top); main.Children.Add(heading);
 
-            var metrics = new Grid { Margin = new Thickness(0, 0, 0, 22) };
+            var metrics = new Grid { Margin = new Thickness(0, 0, 0, 18) };
             for (int i = 0; i < 3; i++) metrics.ColumnDefinitions.Add(new ColumnDefinition());
             var totalCard = Metric(totalCount, "Программ найдено", "#EDF4FC"); totalCard.Margin = new Thickness(0, 0, 12, 0); metrics.Children.Add(totalCard);
             var updatesCard = Metric(updateCount, "Доступно обновлений", "#3BD4F4"); updatesCard.Margin = new Thickness(0, 0, 12, 0); Grid.SetColumn(updatesCard, 1); metrics.Children.Add(updatesCard);
@@ -157,7 +174,7 @@ namespace UpdateHub
 
             var actions = new StackPanel { Margin = new Thickness(0, 0, 0, 16) };
             var searchRow = new DockPanel();
-            update.Content = "Обновить выбранное"; update.Background = Paint("#20C9EB"); update.Foreground = Paint("#06202C"); update.BorderBrush = Paint("#20C9EB"); update.Margin = new Thickness(14, 0, 0, 0); update.Padding = new Thickness(18, 11, 18, 11); update.IsEnabled = false;
+            update.Content = "Обновить выбранное"; update.Background = Paint("#184858"); update.Foreground = Paint("#C5F4FC"); update.BorderBrush = Paint("#2D7588"); update.Margin = new Thickness(14, 0, 0, 0); update.Padding = new Thickness(18, 11, 18, 11); update.IsEnabled = false;
             update.Click += async (s, e) => await UpdateAsync(); DockPanel.SetDock(update, Dock.Right); searchRow.Children.Add(update);
             var clearSearch = new Button { Content = "×", FontSize = 19, Padding = new Thickness(12, 5, 12, 5), Margin = new Thickness(7, 0, 0, 0), ToolTip = "Очистить поиск" };
             clearSearch.Click += (s, e) => { search.Clear(); search.Focus(); }; DockPanel.SetDock(clearSearch, Dock.Right); searchRow.Children.Add(clearSearch);
@@ -173,7 +190,9 @@ namespace UpdateHub
             DockPanel.SetDock(summary, Dock.Right); filters.Children.Add(summary);
             var options = new StackPanel { Orientation = Orientation.Horizontal };
             onlyUpdates.Content = "С обновлениями"; onlyUpdates.IsChecked = true;
-            onlyUpdates.Click += (s, e) => { RefreshView(); refreshNavigation(); }; options.Children.Add(onlyUpdates);
+            onlyUpdates.Checked += (s, e) => refreshNavigation();
+            onlyUpdates.Unchecked += (s, e) => refreshNavigation();
+            onlyUpdates.Click += (s, e) => RefreshView(); options.Children.Add(onlyUpdates);
             selectAll.Content = "Выбрать показанные"; selectAll.Margin = new Thickness(20, 0, 0, 0);
             selectAll.Click += (s, e) => { foreach (var p in packages.Where(MatchesFilter)) p.Selected = p.CanSelect && selectAll.IsChecked == true; };
             options.Children.Add(selectAll);
@@ -197,9 +216,9 @@ namespace UpdateHub
             footer.Children.Add(activity); DockPanel.SetDock(footer, Dock.Bottom); main.Children.Add(footer);
 
             table.ItemsSource = packages; table.AutoGenerateColumns = false; table.CanUserAddRows = false; table.CanUserDeleteRows = false; table.CanUserReorderColumns = false;
-            table.RowHeaderWidth = 0; table.GridLinesVisibility = DataGridGridLinesVisibility.Horizontal; table.HorizontalGridLinesBrush = Paint("#21324A");
-            table.HeadersVisibility = DataGridHeadersVisibility.Column; table.RowHeight = 64; table.ColumnHeaderHeight = 42;
-            table.Background = Paint("#111F33"); table.BorderThickness = new Thickness(0); table.SelectionMode = DataGridSelectionMode.Single;
+            table.RowHeaderWidth = 0; table.GridLinesVisibility = DataGridGridLinesVisibility.Horizontal; table.HorizontalGridLinesBrush = Paint("#273449");
+            table.HeadersVisibility = DataGridHeadersVisibility.Column; table.RowHeight = 54; table.ColumnHeaderHeight = 40;
+            table.Background = Paint("#151E2E"); table.BorderThickness = new Thickness(0); table.SelectionMode = DataGridSelectionMode.Single;
             table.Foreground = Foreground;
             table.SelectionChanged += (s, e) => RefreshSkipButton();
             ScrollViewer.SetHorizontalScrollBarVisibility(table, ScrollBarVisibility.Disabled);
@@ -254,8 +273,9 @@ namespace UpdateHub
             emptyTitle.Text = "Начнём с проверки"; emptyTitle.FontSize = 20; emptyTitle.FontWeight = FontWeights.SemiBold; emptyTitle.TextAlignment = TextAlignment.Center; emptyState.Children.Add(emptyTitle);
             emptyDescription.Text = "Нажмите «Проверить обновления».\nМы найдём доступные версии ваших программ."; emptyDescription.Foreground = Paint("#92A7C2"); emptyDescription.TextAlignment = TextAlignment.Center; emptyDescription.TextWrapping = TextWrapping.Wrap; emptyDescription.Margin = new Thickness(0, 9, 0, 0); emptyState.Children.Add(emptyDescription);
             list.Children.Add(emptyState);
-            var listCard = Card(list, "#111F33", new Thickness(0)); listCard.ClipToBounds = true; main.Children.Add(listCard);
+            var listCard = Card(list, "#151E2E", new Thickness(1)); listCard.ClipToBounds = true; main.Children.Add(listCard);
             CollectionViewSource.GetDefaultView(packages).Filter = o => MatchesFilter((Package)o);
+            refreshNavigation();
         }
 
         private void RefreshView()
@@ -362,8 +382,8 @@ namespace UpdateHub
             historyTable.ColumnHeaderHeight = 42;
             historyTable.HeadersVisibility = DataGridHeadersVisibility.Column;
             historyTable.GridLinesVisibility = DataGridGridLinesVisibility.Horizontal;
-            historyTable.HorizontalGridLinesBrush = Paint("#21324A");
-            historyTable.Background = Paint("#111F33");
+            historyTable.HorizontalGridLinesBrush = Paint("#273449");
+            historyTable.Background = Paint("#151E2E");
             historyTable.BorderThickness = new Thickness(0);
             var textStyle = new Style(typeof(TextBlock));
             textStyle.Setters.Add(new Setter(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis));
@@ -381,7 +401,7 @@ namespace UpdateHub
                     MinWidth = widths[i], Width = new DataGridLength(widths[i], DataGridLengthUnitType.Star)
                 });
             }
-            historyPage.Children.Add(Card(historyTable, "#111F33", new Thickness(0)));
+            historyPage.Children.Add(Card(historyTable, "#151E2E", new Thickness(1)));
         }
 
         private void SaveHistory(HistoryEntry entry)

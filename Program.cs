@@ -16,7 +16,7 @@ using System.Windows.Media.Imaging;
 
 [assembly: System.Reflection.AssemblyTitle("Check Update")]
 [assembly: System.Reflection.AssemblyProduct("Check Update")]
-[assembly: System.Reflection.AssemblyVersion("0.7.3.0")]
+[assembly: System.Reflection.AssemblyVersion("0.8.0.0")]
 
 namespace UpdateHub
 {
@@ -210,6 +210,7 @@ namespace UpdateHub
         {
             var textStyle = new Style(typeof(TextBlock));
             textStyle.Setters.Add(new Setter(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis));
+            textStyle.Setters.Add(new Setter(TextBlock.ForegroundProperty, Paint(path == "Available" ? "#89E9FC" : "#B5C2D6")));
             table.Columns.Add(new DataGridTextColumn { Header = heading, Binding = new Binding(path), IsReadOnly = true, MinWidth = 115, ElementStyle = textStyle, Width = new DataGridLength(width, DataGridLengthUnitType.Star) });
         }
 
@@ -308,7 +309,7 @@ namespace UpdateHub
             {
                 ReplacePackages(await LoadPackagesAsync());
                 ShowProgress("Проверка завершена", 1, 1, false);
-                status.Text = "Проверка завершена. Показаны программы, распознанные каталогом WinGet. Отсутствие обновления в каталоге не гарантирует, что установлена последняя версия.";
+                status.Text = "Показаны программы, распознанные Windows.";
             }
             catch (Win32Exception) { progressText.Text = "Проверка не завершена"; status.Text = "WinGet не найден. Установите или обновите «Установщик приложений» в Microsoft Store."; }
             catch (Exception ex) { progressText.Text = "Проверка не завершена"; Log(ex.ToString()); status.Text = ex.Message; }
