@@ -153,6 +153,20 @@ public static class Tests
         Capture(window, "preview-search-empty.png");
         search.Clear();
         Check(view.Cast<Package>().Count() == items.Count(p => onlyUpdates.IsChecked != true || p.CanUpdate), "clearing search restores active filter");
+        if (target.CanUpdate)
+        {
+            target.Skipped = true;
+            onlyUpdates.IsChecked = true;
+            view.Refresh();
+            Check(!target.CanSelect && !view.Cast<Package>().Contains(target), "skipped version is hidden from updates and excluded from selection");
+            onlyUpdates.IsChecked = false;
+            view.Refresh();
+            Check(view.Cast<Package>().Contains(target), "skipped version remains accessible in all programs");
+            target.Skipped = false;
+            onlyUpdates.IsChecked = true;
+            view.Refresh();
+            Check(target.CanSelect && view.Cast<Package>().Contains(target), "restoring skipped version returns it to updates");
+        }
         var meter = (System.Windows.Controls.ProgressBar)typeof(MainWindow).GetField("progress", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
         Check(!meter.IsIndeterminate && meter.Value == meter.Maximum, "scan progress completes");
         typeof(MainWindow).GetMethod("ShowProgress", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(window, new object[] { "Queue test", 1, 3, false });

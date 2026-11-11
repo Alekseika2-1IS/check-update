@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
@@ -37,6 +38,8 @@ namespace UpdateHub
         private readonly TextBlock historyMessage = new TextBlock();
         private readonly UpdateHistory updateHistory = new UpdateHistory(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UpdateHub", "history.jsonl"));
         private bool historyWriteFailed;
+        private readonly Button skipVersion = new Button { Content = "Пропустить версию", IsEnabled = false };
+        private const string SkippedVersionsKey = @"Software\CheckUpdate\SkippedVersions";
         private static Brush Paint(string hex) { return new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)); }
         [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
 
@@ -164,8 +167,15 @@ namespace UpdateHub
             onlyUpdates.Content = "С обновлениями"; onlyUpdates.IsChecked = true;
             onlyUpdates.Click += (s, e) => { RefreshView(); refreshNavigation(); }; options.Children.Add(onlyUpdates);
             selectAll.Content = "Выбрать показанные"; selectAll.Margin = new Thickness(20, 0, 0, 0);
-            selectAll.Click += (s, e) => { foreach (var p in packages.Where(MatchesFilter)) p.Selected = p.CanUpdate && selectAll.IsChecked == true; };
-            options.Children.Add(selectAll); filters.Children.Add(options); actions.Children.Add(filters);
+            selectAll.Click += (s, e) => { foreach (var p in packages.Where(MatchesFilter)) p.Selected = p.CanSelect && selectAll.IsChecked == true; };
+            options.Children.Add(selectAll);
+            skipVersion.Margin = new Thickness(16, 0, 0, 0);
+            skipVersion.Padding = new Thickness(10, 5, 10, 5);
+            skipVersion.FontSize = 11;
+            skipVersion.ToolTip = "Щёлкните по строке программы, чтобы пропустить эту версию или вернуть её в список.";
+            skipVersion.Click += (s, e) => ToggleSkippedVersion();
+            options.Children.Add(skipVersion);
+            filters.Children.Add(options); actions.Children.Add(filters);
             DockPanel.SetDock(actions, Dock.Top); main.Children.Add(actions);
 
             var footer = new DockPanel { Margin = new Thickness(0, 16, 0, 0) };
@@ -183,18 +193,49 @@ namespace UpdateHub
             table.HeadersVisibility = DataGridHeadersVisibility.Column; table.RowHeight = 64; table.ColumnHeaderHeight = 42;
             table.Background = Paint("#111F33"); table.BorderThickness = new Thickness(0); table.SelectionMode = DataGridSelectionMode.Single;
             table.Foreground = Foreground;
+            table.SelectionChanged += (s, e) => RefreshSkipButton();
             ScrollViewer.SetHorizontalScrollBarVisibility(table, ScrollBarVisibility.Disabled);
             var checkFactory = new FrameworkElementFactory(typeof(CheckBox));
             checkFactory.SetBinding(CheckBox.IsCheckedProperty, new Binding("Selected") { Mode = BindingMode.TwoWay, UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged });
-            checkFactory.SetBinding(CheckBox.IsEnabledProperty, new Binding("CanUpdate"));
+            checkFactory.SetBinding(CheckBox.IsEnabledProperty, new Binding("CanSelect"));
             checkFactory.SetValue(CheckBox.HorizontalAlignmentProperty, HorizontalAlignment.Center);
             checkFactory.SetValue(CheckBox.VerticalAlignmentProperty, VerticalAlignment.Center);
             checkFactory.SetBinding(System.Windows.Automation.AutomationProperties.NameProperty, new Binding("Name") { StringFormat = "Выбрать {0}" });
             table.Columns.Add(new DataGridTemplateColumn { Header = "", Width = new DataGridLength(44), CellTemplate = new DataTemplate { VisualTree = checkFactory } });
             var namePanel = new FrameworkElementFactory(typeof(StackPanel));
+            var programCell = new FrameworkElementFactory(typeof(DockPanel));
+            var iconPanel = new FrameworkElementFactory(typeof(Grid));
+            iconPanel.SetValue(DockPanel.DockProperty, Dock.Left);
+            iconPanel.SetValue(FrameworkElement.WidthProperty, 32.0);
+            iconPanel.SetValue(FrameworkElement.HeightProperty, 32.0);
+            iconPanel.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 10, 0));
+            iconPanel.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+            var initial = new FrameworkElementFactory(typeof(TextBlock));
+            initial.SetBinding(TextBlock.TextProperty, new Binding("Initial"));
+            initial.SetValue(TextBlock.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            initial.SetValue(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center);
+            initial.SetValue(TextBlock.ForegroundProperty, Paint("#64D8EF"));
+            initial.SetValue(TextBlock.FontWeightProperty, FontWeights.SemiBold);
+            var fallback = new FrameworkElementFactory(typeof(Border));
+            fallback.SetValue(Border.BackgroundProperty, Paint("#1A334A"));
+            fallback.SetValue(Border.CornerRadiusProperty, new CornerRadius(7));
+            var fallbackStyle = new Style(typeof(Border));
+            fallbackStyle.Setters.Add(new Setter(VisibilityProperty, Visibility.Collapsed));
+            var missingIcon = new DataTrigger { Binding = new Binding("Icon"), Value = null };
+            missingIcon.Setters.Add(new Setter(VisibilityProperty, Visibility.Visible));
+            fallbackStyle.Triggers.Add(missingIcon);
+            fallback.SetValue(FrameworkElement.StyleProperty, fallbackStyle);
+            fallback.AppendChild(initial);
+            iconPanel.AppendChild(fallback);
+            var icon = new FrameworkElementFactory(typeof(Image));
+            icon.SetBinding(Image.SourceProperty, new Binding("Icon"));
+            icon.SetValue(Image.StretchProperty, Stretch.Uniform);
+            iconPanel.AppendChild(icon);
+            programCell.AppendChild(iconPanel);
+            programCell.AppendChild(namePanel);
             var packageName = new FrameworkElementFactory(typeof(TextBlock)); packageName.SetBinding(TextBlock.TextProperty, new Binding("Name")); packageName.SetValue(TextBlock.FontWeightProperty, FontWeights.SemiBold); packageName.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis); namePanel.AppendChild(packageName);
             var packageId = new FrameworkElementFactory(typeof(TextBlock)); packageId.SetBinding(TextBlock.TextProperty, new Binding("Id")); packageId.SetValue(TextBlock.ForegroundProperty, Paint("#8299B5")); packageId.SetValue(TextBlock.FontSizeProperty, 10.5); packageId.SetValue(TextBlock.MarginProperty, new Thickness(0, 4, 0, 0)); packageId.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis); namePanel.AppendChild(packageId);
-            table.Columns.Add(new DataGridTemplateColumn { Header = "ПРОГРАММА", MinWidth = 220, Width = new DataGridLength(2.3, DataGridLengthUnitType.Star), SortMemberPath = "Name", CellTemplate = new DataTemplate { VisualTree = namePanel } });
+            table.Columns.Add(new DataGridTemplateColumn { Header = "ПРОГРАММА", MinWidth = 220, Width = new DataGridLength(2.3, DataGridLengthUnitType.Star), SortMemberPath = "Name", CellTemplate = new DataTemplate { VisualTree = programCell } });
             AddColumn("УСТАНОВЛЕНО", "Installed", 1); AddColumn("ДОСТУПНО", "Available", 1);
             var badge = new FrameworkElementFactory(typeof(Border)); badge.SetValue(Border.BackgroundProperty, Paint("#162F41")); badge.SetValue(Border.CornerRadiusProperty, new CornerRadius(6)); badge.SetValue(Border.PaddingProperty, new Thickness(9, 5, 9, 5)); badge.SetValue(Border.HorizontalAlignmentProperty, HorizontalAlignment.Left);
             var badgeText = new FrameworkElementFactory(typeof(TextBlock)); badgeText.SetBinding(TextBlock.TextProperty, new Binding("Status")); badgeText.SetBinding(TextBlock.ForegroundProperty, new Binding("Status") { Converter = new StatusColor() }); badgeText.SetValue(TextBlock.FontSizeProperty, 11.0); badgeText.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis); badgeText.SetBinding(TextBlock.ToolTipProperty, new Binding("Status")); badge.AppendChild(badgeText);
@@ -221,7 +262,9 @@ namespace UpdateHub
                 if (visible == 0 && String.IsNullOrWhiteSpace(search.Text) && onlyUpdates.IsChecked == true)
                 {
                     emptyTitle.Text = "Всё проверено";
-                    emptyDescription.Text = "В каталоге нет доступных обновлений.\nМожно посмотреть все найденные программы.";
+                    emptyDescription.Text = packages.Any(p => p.Skipped)
+                        ? "Пропущенные версии можно вернуть в разделе «Все программы»."
+                        : "В каталоге нет доступных обновлений.\nМожно посмотреть все найденные программы.";
                 }
             }
             emptyState.Visibility = visible == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -229,8 +272,58 @@ namespace UpdateHub
 
         private void RefreshCounters()
         {
-            totalCount.Text = packages.Count.ToString(); updateCount.Text = packages.Count(p => p.CanUpdate).ToString(); selectedCount.Text = packages.Count(p => p.Selected).ToString();
-            update.IsEnabled = !busy && !downloadingApp && packages.Any(p => p.Selected && p.CanUpdate);
+            totalCount.Text = packages.Count.ToString(); updateCount.Text = packages.Count(p => p.CanSelect).ToString(); selectedCount.Text = packages.Count(p => p.Selected).ToString();
+            update.IsEnabled = !busy && !downloadingApp && packages.Any(p => p.Selected && p.CanSelect);
+        }
+
+        private void LoadSkippedVersions(IEnumerable<Package> found)
+        {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(SkippedVersionsKey))
+                {
+                    if (key == null) return;
+                    foreach (var package in found.Where(p => p.CanUpdate))
+                        package.Skipped = String.Equals(key.GetValue(package.Id) as string, package.Available, StringComparison.Ordinal);
+                }
+            }
+            catch (Exception ex) { Log("Не удалось прочитать пропущенные версии: " + ex.Message); }
+        }
+
+        private void RefreshSkipButton()
+        {
+            var package = table.SelectedItem as Package;
+            skipVersion.IsEnabled = !busy && !downloadingApp && package != null && package.CanUpdate;
+            skipVersion.Content = package != null && package.Skipped ? "Вернуть обновление" : "Пропустить версию";
+        }
+
+        private void ToggleSkippedVersion()
+        {
+            var package = table.SelectedItem as Package;
+            if (busy || downloadingApp || package == null || !package.CanUpdate) return;
+            bool skip = !package.Skipped;
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(SkippedVersionsKey))
+                {
+                    if (skip) key.SetValue(package.Id, package.Available);
+                    else key.DeleteValue(package.Id, false);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("Не удалось сохранить пропущенную версию: " + ex.Message);
+                ShowError("Не удалось сохранить выбор. Подробности в журнале.");
+                return;
+            }
+            if (skip) package.Selected = false;
+            package.Skipped = skip;
+            selectAll.IsChecked = false;
+            RefreshView();
+            RefreshCounters();
+            RefreshSkipButton();
+            status.Text = skip ? package.Name + " " + package.Available + " пропущена. Вернуть её можно в разделе «Все программы»."
+                : "Обновление для " + package.Name + " снова доступно.";
         }
 
         private void SelectionChanged(object sender, PropertyChangedEventArgs args)

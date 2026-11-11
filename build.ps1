@@ -12,6 +12,7 @@ $compilerArguments += Join-Path $PSScriptRoot 'Program.cs'
 $compilerArguments += Join-Path $PSScriptRoot 'SelfUpdate.cs'
 $compilerArguments += Join-Path $PSScriptRoot 'Design.cs'
 $compilerArguments += Join-Path $PSScriptRoot 'History.cs'
+$compilerArguments += Join-Path $PSScriptRoot 'PackageIcons.cs'
 & (Join-Path $framework 'csc.exe') @compilerArguments
 if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 Write-Output (Join-Path $outputDirectory 'Check Update.exe')

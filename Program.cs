@@ -16,7 +16,7 @@ using System.Windows.Media.Imaging;
 
 [assembly: System.Reflection.AssemblyTitle("Check Update")]
 [assembly: System.Reflection.AssemblyProduct("Check Update")]
-[assembly: System.Reflection.AssemblyVersion("0.6.0.0")]
+[assembly: System.Reflection.AssemblyVersion("0.7.0.0")]
 
 namespace UpdateHub
 {
@@ -27,10 +27,19 @@ namespace UpdateHub
         public string Installed { get; set; }
         public string Available { get; set; }
         public bool CanUpdate { get { return !String.IsNullOrWhiteSpace(Available); } }
+        public ImageSource Icon { get; set; }
+        public string Initial { get { return String.IsNullOrWhiteSpace(Name) ? "?" : Name.Substring(0, 1).ToUpperInvariant(); } }
+        private bool skipped;
+        public bool Skipped
+        {
+            get { return skipped; }
+            set { skipped = value; Changed("CanSelect"); Changed("Status"); }
+        }
+        public bool CanSelect { get { return CanUpdate && !Skipped; } }
         private bool selected;
         public bool Selected { get { return selected; } set { selected = value; Changed("Selected"); } }
         private string status;
-        public string Status { get { return status ?? (CanUpdate ? "Есть обновление" : "Без обновлений"); } set { status = value; Changed("Status"); } }
+        public string Status { get { return Skipped ? "Версия пропущена" : status ?? (CanUpdate ? "Есть обновление" : "Без обновлений"); } set { status = value; Changed("Status"); } }
         public event PropertyChangedEventHandler PropertyChanged;
         private void Changed(string property) { if (PropertyChanged != null) PropertyChanged(this, new PropertyChangedEventArgs(property)); }
     }
@@ -166,7 +175,8 @@ namespace UpdateHub
 
         private void SetBusy(bool value)
         {
-            busy = value; scan.IsEnabled = !value && !downloadingApp; update.IsEnabled = !value && !downloadingApp && packages.Any(p => p.CanUpdate && p.Selected);
+            busy = value; scan.IsEnabled = !value && !downloadingApp; update.IsEnabled = !value && !downloadingApp && packages.Any(p => p.CanSelect && p.Selected);
+            RefreshSkipButton();
             appUpdate.IsEnabled = !value && !checkingVersion && !downloadingApp;
             table.IsEnabled = !value; selectAll.IsEnabled = !value; onlyUpdates.IsEnabled = !value;
             if (!value) progress.IsIndeterminate = false;
@@ -175,7 +185,7 @@ namespace UpdateHub
         private bool MatchesFilter(Package package)
         {
             string query = search.Text.Trim();
-            return (onlyUpdates.IsChecked != true || package.CanUpdate)
+            return (onlyUpdates.IsChecked != true || package.CanSelect)
                 && (query.Length == 0 || package.Name.IndexOf(query, StringComparison.CurrentCultureIgnoreCase) >= 0
                     || package.Id.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0);
         }
@@ -232,13 +242,19 @@ namespace UpdateHub
             var result = await Task.Run(() => Winget.Run("list --source winget --disable-interactivity", 120000));
             Log("Проверка: " + result.Code + "\n" + result.Output + "\n" + result.Error);
             if (result.Code != 0) throw new InvalidOperationException("Windows не смогла проверить программы. Проверьте интернет и доступность WinGet. Подробности — в журнале.");
-            return Winget.Parse(result.Output);
+            return await Task.Run(() =>
+            {
+                var found = Winget.Parse(result.Output);
+                PackageIcons.Populate(found);
+                return found;
+            });
         }
 
         private void ReplacePackages(List<Package> found)
         {
             foreach (var p in packages) p.PropertyChanged -= SelectionChanged;
             packages.Clear();
+            LoadSkippedVersions(found);
             foreach (var p in found) { p.PropertyChanged += SelectionChanged; packages.Add(p); }
             selectAll.IsChecked = false;
             RefreshCounters(); RefreshView();
@@ -262,7 +278,7 @@ namespace UpdateHub
         private async Task UpdateAsync()
         {
             table.CommitEdit(); table.CommitEdit();
-            var chosen = packages.Where(p => p.Selected && p.CanUpdate).ToList();
+            var chosen = packages.Where(p => p.Selected && p.CanSelect).ToList();
             if (chosen.Count == 0) { ShowError("Отметьте программы, которые хотите обновить."); return; }
             string list = String.Join("\n", chosen.Select(p => "• " + p.Name + " → " + p.Available));
             if (MessageBox.Show(this, "Обновить выбранные программы?\n\n" + list + "\n\nСохраните работу в этих программах. Продолжая, вы принимаете лицензионные условия выбранных обновлений. Установщики могут запросить права администратора.", "Подтверждение обновлений", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
