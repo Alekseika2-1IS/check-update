@@ -157,6 +157,7 @@ namespace UpdateHub
             scan.Background = Paint("#79DFF4");
             scan.Foreground = Paint("#102332");
             scan.BorderBrush = Paint("#79DFF4");
+            scan.Style = (Style)FindResource("AnimatedButton");
             scan.Click += async (s, e) => await ScanAsync(); DockPanel.SetDock(scan, Dock.Right); heading.Children.Add(scan);
             var headingText = new StackPanel();
             var title = Label("Обновления программ", 29, "#F2F7FF");
@@ -175,6 +176,7 @@ namespace UpdateHub
             var actions = new StackPanel { Margin = new Thickness(0, 0, 0, 16) };
             var searchRow = new DockPanel();
             update.Content = "Обновить выбранное"; update.Background = Paint("#184858"); update.Foreground = Paint("#C5F4FC"); update.BorderBrush = Paint("#2D7588"); update.Margin = new Thickness(14, 0, 0, 0); update.Padding = new Thickness(18, 11, 18, 11); update.IsEnabled = false;
+            update.Style = (Style)FindResource("AnimatedButton");
             update.Click += async (s, e) => await UpdateAsync(); DockPanel.SetDock(update, Dock.Right); searchRow.Children.Add(update);
             var clearSearch = new Button { Content = "×", FontSize = 19, Padding = new Thickness(12, 5, 12, 5), Margin = new Thickness(7, 0, 0, 0), ToolTip = "Очистить поиск" };
             clearSearch.Click += (s, e) => { search.Clear(); search.Focus(); }; DockPanel.SetDock(clearSearch, Dock.Right); searchRow.Children.Add(clearSearch);
@@ -264,9 +266,7 @@ namespace UpdateHub
             var packageId = new FrameworkElementFactory(typeof(TextBlock)); packageId.SetBinding(TextBlock.TextProperty, new Binding("Id")); packageId.SetValue(TextBlock.ForegroundProperty, Paint("#8299B5")); packageId.SetValue(TextBlock.FontSizeProperty, 10.5); packageId.SetValue(TextBlock.MarginProperty, new Thickness(0, 4, 0, 0)); packageId.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis); namePanel.AppendChild(packageId);
             table.Columns.Add(new DataGridTemplateColumn { Header = "ПРОГРАММА", MinWidth = 220, Width = new DataGridLength(2.3, DataGridLengthUnitType.Star), SortMemberPath = "Name", CellTemplate = new DataTemplate { VisualTree = programCell } });
             AddColumn("УСТАНОВЛЕНО", "Installed", 1); AddColumn("ДОСТУПНО", "Available", 1);
-            var badge = new FrameworkElementFactory(typeof(Border)); badge.SetValue(Border.BackgroundProperty, Paint("#162F41")); badge.SetValue(Border.CornerRadiusProperty, new CornerRadius(6)); badge.SetValue(Border.PaddingProperty, new Thickness(9, 5, 9, 5)); badge.SetValue(Border.HorizontalAlignmentProperty, HorizontalAlignment.Left);
-            var badgeText = new FrameworkElementFactory(typeof(TextBlock)); badgeText.SetBinding(TextBlock.TextProperty, new Binding("Status")); badgeText.SetBinding(TextBlock.ForegroundProperty, new Binding("Status") { Converter = new StatusColor() }); badgeText.SetValue(TextBlock.FontSizeProperty, 11.0); badgeText.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis); badgeText.SetBinding(TextBlock.ToolTipProperty, new Binding("Status")); badge.AppendChild(badgeText);
-            table.Columns.Add(new DataGridTemplateColumn { Header = "СОСТОЯНИЕ", MinWidth = 170, Width = new DataGridLength(1.65, DataGridLengthUnitType.Star), SortMemberPath = "Status", CellTemplate = new DataTemplate { VisualTree = badge } });
+            table.Columns.Add(new DataGridTemplateColumn { Header = "СОСТОЯНИЕ", MinWidth = 170, Width = new DataGridLength(1.65, DataGridLengthUnitType.Star), SortMemberPath = "Status", CellTemplate = StatusBadge("Status") });
             var list = new Grid(); list.Children.Add(table);
             emptyState.VerticalAlignment = VerticalAlignment.Center; emptyState.HorizontalAlignment = HorizontalAlignment.Center; emptyState.Margin = new Thickness(28); emptyState.IsHitTestVisible = false;
             emptyState.Children.Add(new Image { Source = logo, Width = 64, Height = 64, Opacity = 0.85, Margin = new Thickness(0, 0, 0, 18) });
@@ -392,9 +392,17 @@ namespace UpdateHub
             int[] widths = { 135, 145, 75, 125, 175 };
             for (int i = 0; i < headings.Length; i++)
             {
+                if (paths[i] == "Result")
+                {
+                    historyTable.Columns.Add(new DataGridTemplateColumn
+                    {
+                        Header = headings[i], CellTemplate = StatusBadge("Result"), SortMemberPath = "Result",
+                        MinWidth = widths[i], Width = new DataGridLength(widths[i], DataGridLengthUnitType.Star)
+                    });
+                    continue;
+                }
                 var style = new Style(typeof(TextBlock), textStyle);
                 style.Setters.Add(new Setter(ToolTipProperty, new Binding(paths[i])));
-                if (i == 4) style.Setters.Add(new Setter(TextBlock.ForegroundProperty, new Binding("Result") { Converter = new StatusColor() }));
                 historyTable.Columns.Add(new DataGridTextColumn
                 {
                     Header = headings[i], Binding = new Binding(paths[i]), ElementStyle = style,
@@ -402,6 +410,16 @@ namespace UpdateHub
                 });
             }
             historyPage.Children.Add(Card(historyTable, "#151E2E", new Thickness(1)));
+        }
+
+        private DataTemplate StatusBadge(string path)
+        {
+            var badge = new FrameworkElementFactory(typeof(ContentControl));
+            badge.SetValue(FrameworkElement.StyleProperty, (Style)FindResource("StatusBadge"));
+            badge.SetBinding(ContentControl.ContentProperty, new Binding(path));
+            badge.SetBinding(Control.ForegroundProperty, new Binding(path) { Converter = new StatusColor() });
+            badge.SetBinding(ToolTipProperty, new Binding(path));
+            return new DataTemplate { VisualTree = badge };
         }
 
         private void SaveHistory(HistoryEntry entry)

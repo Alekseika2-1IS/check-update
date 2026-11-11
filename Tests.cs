@@ -188,8 +188,66 @@ public static class Tests
         Capture(window, "preview.png");
         window.Width = window.MinWidth; window.Height = window.MinHeight;
         Capture(window, "preview-small.png");
+        CheckVisualEffects(window);
         window.Close(); app.Shutdown();
         Console.WriteLine("All " + checks + " checks passed. No updates installed.");
+    }
+
+    private sealed class EffectButton : System.Windows.Controls.Button
+    {
+        public void SetPressed(bool pressed) { IsPressed = pressed; }
+    }
+
+    private static void WaitForAnimation(int milliseconds)
+    {
+        var frame = new DispatcherFrame();
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(milliseconds) };
+        timer.Tick += (sender, e) => frame.Continue = false;
+        timer.Start();
+        Dispatcher.PushFrame(frame);
+        timer.Stop();
+    }
+
+    private static void CheckVisualEffects(MainWindow window)
+    {
+        var panel = new System.Windows.Controls.StackPanel();
+        var style = (Style)window.FindResource("StatusBadge");
+        var available = new System.Windows.Controls.ContentControl { Content = "Есть обновление", Tag = true, Style = style };
+        var installed = new System.Windows.Controls.ContentControl { Content = "Установлено", Tag = true, Style = style };
+        var button = new EffectButton { Content = "Проверить обновления", Tag = true, Style = (Style)window.FindResource("AnimatedButton") };
+        panel.Children.Add(available);
+        panel.Children.Add(installed);
+        panel.Children.Add(button);
+        var preview = new Window { Content = panel, Width = 300, Height = 180, ShowActivated = false, Left = -10000, Top = -10000 };
+        preview.Show();
+        preview.UpdateLayout();
+        WaitForAnimation(100);
+        try
+        {
+            var blue = (System.Windows.Controls.Border)available.Template.FindName("BadgeShimmer", available);
+            var green = (System.Windows.Controls.Border)installed.Template.FindName("BadgeShimmer", installed);
+            var blueBrush = (LinearGradientBrush)blue.Background;
+            var greenBrush = (LinearGradientBrush)green.Background;
+            Check(blue.IsVisible && green.IsVisible && blueBrush.GradientStops[1].Color != greenBrush.GradientStops[1].Color,
+                "available and installed badges display distinct highlights");
+            Check(blueBrush.RelativeTransform.HasAnimatedProperties && greenBrush.RelativeTransform.HasAnimatedProperties,
+                "both status highlights animate");
+            available.Content = "Без обновлений";
+            installed.Tag = false;
+            Check(blue.Visibility == Visibility.Collapsed && green.Visibility == Visibility.Collapsed,
+                "inactive statuses and disabled motion suppress shimmer");
+            button.SetPressed(true);
+            WaitForAnimation(140);
+            var shell = (System.Windows.Controls.Border)button.Template.FindName("Shell", button);
+            var pulse = (System.Windows.Controls.Border)button.Template.FindName("PressLight", button);
+            Check(((ScaleTransform)shell.RenderTransform).ScaleX < 1 && pulse.Opacity > 0,
+                "primary button scales and lights on press");
+            button.SetPressed(false);
+            WaitForAnimation(240);
+            Check(((ScaleTransform)shell.RenderTransform).ScaleX > 0.99 && pulse.Opacity < 0.01,
+                "primary button returns to rest on release");
+        }
+        finally { preview.Close(); }
     }
 
     static void CheckShortcutIcon()
