@@ -27,6 +27,7 @@ namespace UpdateHub
         public static void Populate(IEnumerable<Package> packages)
         {
             var icons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var installDirectories = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var hive in new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine })
             foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
             {
@@ -43,8 +44,11 @@ namespace UpdateHub
                                 if (entry == null) continue;
                                 string name = entry.GetValue("DisplayName") as string;
                                 string icon = entry.GetValue("DisplayIcon") as string;
+                                string location = entry.GetValue("InstallLocation") as string;
                                 if (!String.IsNullOrWhiteSpace(name) && !String.IsNullOrWhiteSpace(icon) && !icons.ContainsKey(name))
                                     icons[name] = icon;
+                                if (!String.IsNullOrWhiteSpace(name) && !String.IsNullOrWhiteSpace(location) && !installDirectories.ContainsKey(name))
+                                    installDirectories[name] = location;
                             }
                         }
                     }
@@ -69,7 +73,7 @@ namespace UpdateHub
             }
             LoadPackagedIcons(remaining);
             var startMenuFolders = new[] { Environment.GetFolderPath(Environment.SpecialFolder.Programs), Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms) };
-            LoadShortcutIcons(remaining.Where(package => package.Icon == null).ToList(), startMenuFolders);
+            LoadShortcutIcons(remaining.Where(package => package.Icon == null).ToList(), startMenuFolders, installDirectories);
         }
 
         private static void LoadPackagedIcons(List<Package> packages)
@@ -146,7 +150,14 @@ namespace UpdateHub
             return null;
         }
 
-        private static void LoadShortcutIcons(List<Package> packages, IEnumerable<string> folders)
+        private sealed class ShortcutInfo
+        {
+            public string Name;
+            public string Target;
+            public string Icon;
+        }
+
+        private static void LoadShortcutIcons(List<Package> packages, IEnumerable<string> folders, IDictionary<string, string> installDirectories)
         {
             if (packages.Count == 0) return;
             object shell = null;
@@ -154,16 +165,13 @@ namespace UpdateHub
             {
                 var type = Type.GetTypeFromProgID("WScript.Shell");
                 if (type == null) return;
-                var shortcuts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var shortcuts = new List<string>();
                 foreach (var directory in folders)
                     FindShortcuts(directory, shortcuts, 0);
                 shell = Activator.CreateInstance(type);
-                foreach (var package in packages)
+                var links = new List<ShortcutInfo>();
+                foreach (var shortcut in shortcuts)
                 {
-                    string shortcut;
-                    if (!shortcuts.TryGetValue(package.Name, out shortcut) &&
-                        !shortcuts.TryGetValue(Regex.Replace(package.Name, @"\s+\d+(?:\.\d+)+(?:\s+\([^)]+\))?$", ""), out shortcut))
-                        continue;
                     object link = null;
                     try
                     {
@@ -171,27 +179,58 @@ namespace UpdateHub
                         var linkType = link.GetType();
                         string icon = linkType.InvokeMember("IconLocation", BindingFlags.GetProperty, null, link, null) as string;
                         string target = linkType.InvokeMember("TargetPath", BindingFlags.GetProperty, null, link, null) as string;
-                        package.Icon = Load(icon) ?? Load(target);
+                        if (IsLocalPath(target))
+                            links.Add(new ShortcutInfo { Name = Path.GetFileNameWithoutExtension(shortcut), Target = target, Icon = icon });
                     }
                     catch (Exception) { /* A broken shortcut is skipped. */ }
                     finally { if (link != null) Marshal.ReleaseComObject(link); }
+                }
+                foreach (var package in packages)
+                {
+                    string shortName = Regex.Replace(package.Name, @"\s+\d+(?:\.\d+)+(?:\s+\([^)]+\))?$", "");
+                    string installDirectory;
+                    installDirectories.TryGetValue(package.Name, out installDirectory);
+                    var matches = links.Where(link =>
+                        String.Equals(link.Name, package.Name, StringComparison.OrdinalIgnoreCase) ||
+                        String.Equals(link.Name, shortName, StringComparison.OrdinalIgnoreCase));
+                    matches = matches.Concat(links.Where(link => IsInsideInstallDirectory(link.Target, installDirectory))).Distinct();
+                    foreach (var match in matches)
+                    {
+                        package.Icon = Load(match.Icon) ?? Load(match.Target);
+                        if (package.Icon != null) break;
+                    }
                 }
             }
             catch (Exception) { /* The shell is optional. */ }
             finally { if (shell != null) Marshal.ReleaseComObject(shell); }
         }
 
-        private static void FindShortcuts(string directory, Dictionary<string, string> shortcuts, int depth)
+        private static bool IsInsideInstallDirectory(string target, string directory)
+        {
+            if (!IsLocalPath(directory)) return false;
+            try
+            {
+                string root = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar);
+                if (root.Length <= 2) return false;
+                foreach (var folder in new[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86, Environment.SpecialFolder.Windows, Environment.SpecialFolder.UserProfile, Environment.SpecialFolder.LocalApplicationData })
+                {
+                    if (String.Equals(root, Environment.GetFolderPath(folder), StringComparison.OrdinalIgnoreCase))
+                        return false;
+                }
+                return Path.GetFullPath(target).StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+            }
+            catch (ArgumentException) { return false; }
+            catch (NotSupportedException) { return false; }
+            catch (PathTooLongException) { return false; }
+        }
+
+        private static void FindShortcuts(string directory, List<string> shortcuts, int depth)
         {
             if (depth > 6 || !IsLocalPath(directory)) return;
             try
             {
                 if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) return;
-                foreach (string file in Directory.EnumerateFiles(directory, "*.lnk"))
-                {
-                    string name = Path.GetFileNameWithoutExtension(file);
-                    if (!shortcuts.ContainsKey(name)) shortcuts[name] = file;
-                }
+                shortcuts.AddRange(Directory.EnumerateFiles(directory, "*.lnk"));
                 foreach (string child in Directory.EnumerateDirectories(directory))
                     FindShortcuts(child, shortcuts, depth + 1);
             }

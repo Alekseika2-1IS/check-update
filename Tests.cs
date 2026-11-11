@@ -194,10 +194,22 @@ public static class Tests
             link = type.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { shortcut });
             link.GetType().InvokeMember("TargetPath", BindingFlags.SetProperty, null, link, new object[] { typeof(MainWindow).Assembly.Location });
             link.GetType().InvokeMember("Save", BindingFlags.InvokeMethod, null, link, null);
-            var rows = new System.Collections.Generic.List<Package> { new Package { Name = "Icon test 1.0", Id = "Fixture.Icon" } };
+            var rows = new System.Collections.Generic.List<Package>
+            {
+                new Package { Name = "Icon test 1.0", Id = "Fixture.Icon" },
+                new Package { Name = "Differently named program", Id = "Fixture.Directory" },
+                new Package { Name = "Sibling program", Id = "Fixture.Sibling" }
+            };
+            string targetDirectory = Path.GetDirectoryName(typeof(MainWindow).Assembly.Location);
+            var locations = new System.Collections.Generic.Dictionary<string, string>
+            {
+                { rows[1].Name, targetDirectory },
+                { rows[2].Name, targetDirectory.Substring(0, targetDirectory.Length - 1) }
+            };
             typeof(PackageIcons).GetMethod("LoadShortcutIcons", BindingFlags.Static | BindingFlags.NonPublic)
-                .Invoke(null, new object[] { rows, new[] { folder } });
+                .Invoke(null, new object[] { rows, new[] { folder }, locations });
             Check(rows[0].Icon != null && rows[0].Icon.IsFrozen, "missing icon is recovered from a matching Start menu shortcut target");
+            Check(rows[1].Icon != null && rows[2].Icon == null, "differently named shortcut matches the install directory without matching a partial path");
         }
         finally
         {
