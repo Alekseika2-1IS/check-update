@@ -28,6 +28,7 @@ public static class Tests
     [STAThread]
     public static void Main(string[] args)
     {
+        CheckShortcutIcon();
         string historyPath = Path.Combine(Path.GetTempPath(), "CheckUpdate-history-" + Guid.NewGuid().ToString("N") + ".jsonl");
         try
         {
@@ -177,5 +178,33 @@ public static class Tests
         Capture(window, "preview-small.png");
         window.Close(); app.Shutdown();
         Console.WriteLine("All " + checks + " checks passed. No updates installed.");
+    }
+
+    static void CheckShortcutIcon()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "CheckUpdate-shortcut-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        string shortcut = Path.Combine(folder, "Icon test.lnk");
+        object shell = null;
+        object link = null;
+        try
+        {
+            var type = Type.GetTypeFromProgID("WScript.Shell");
+            shell = Activator.CreateInstance(type);
+            link = type.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { shortcut });
+            link.GetType().InvokeMember("TargetPath", BindingFlags.SetProperty, null, link, new object[] { typeof(MainWindow).Assembly.Location });
+            link.GetType().InvokeMember("Save", BindingFlags.InvokeMethod, null, link, null);
+            var rows = new System.Collections.Generic.List<Package> { new Package { Name = "Icon test 1.0", Id = "Fixture.Icon" } };
+            typeof(PackageIcons).GetMethod("LoadShortcutIcons", BindingFlags.Static | BindingFlags.NonPublic)
+                .Invoke(null, new object[] { rows, new[] { folder } });
+            Check(rows[0].Icon != null && rows[0].Icon.IsFrozen, "missing icon is recovered from a matching Start menu shortcut target");
+        }
+        finally
+        {
+            if (link != null) System.Runtime.InteropServices.Marshal.ReleaseComObject(link);
+            if (shell != null) System.Runtime.InteropServices.Marshal.ReleaseComObject(shell);
+            File.Delete(shortcut);
+            Directory.Delete(folder);
+        }
     }
 }
