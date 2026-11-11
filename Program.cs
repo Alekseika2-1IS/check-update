@@ -16,7 +16,7 @@ using System.Windows.Media.Imaging;
 
 [assembly: System.Reflection.AssemblyTitle("Check Update")]
 [assembly: System.Reflection.AssemblyProduct("Check Update")]
-[assembly: System.Reflection.AssemblyVersion("0.5.3.0")]
+[assembly: System.Reflection.AssemblyVersion("0.6.0.0")]
 
 namespace UpdateHub
 {
@@ -144,7 +144,7 @@ namespace UpdateHub
 
         public MainWindow(bool checkSelfUpdates = true)
         {
-            Title = "Check Update 0.5.3 — обновления программ"; Width = 1240; Height = 860; MinWidth = 1040; MinHeight = 740;
+            Title = "Check Update " + SelfUpdate.CurrentVersion.ToString(3) + " — обновления программ"; Width = 1240; Height = 860; MinWidth = 1040; MinHeight = 740;
             var logo = new BitmapImage();
             using (var stream = typeof(MainWindow).Assembly.GetManifestResourceStream("CheckUpdate.Icon.png"))
             {
@@ -270,10 +270,12 @@ namespace UpdateHub
             ShowProgress("Подготовка обновлений…", 0, chosen.Count, false);
             var successfulIds = new List<string>();
             var failedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var pendingHistory = new Dictionary<string, HistoryEntry>(StringComparer.OrdinalIgnoreCase);
             try
             {
                 foreach (var p in chosen)
                 {
+                    var history = new HistoryEntry { Name = p.Name, Before = p.Installed, Requested = p.Available, Result = "Не завершено" };
                     p.Status = "Установка…"; status.Text = "Обновляем: " + p.Name + ". Если открылся установщик, завершите его шаги.";
                     ShowProgress(String.Format("Программа {0} из {1}: {2} — установка…", succeeded + failed + 1, chosen.Count, p.Name), succeeded + failed, chosen.Count, false);
                     try
@@ -282,10 +284,16 @@ namespace UpdateHub
                         Log("Обновление " + p.Id + ": " + result.Code + "\n" + result.Output + "\n" + result.Error);
                         bool ok = result.Code == 0;
                         p.Status = ok ? "Установлено — сверяем версии…" : "Не завершено — см. журнал";
-                        if (ok) { succeeded++; successfulIds.Add(p.Id); }
+                        if (ok)
+                        {
+                            succeeded++; successfulIds.Add(p.Id);
+                            history.Result = "Версия не подтверждена";
+                            pendingHistory.Add(p.Id, history);
+                        }
                         else { failed++; failedIds.Add(p.Id); }
                     }
                     catch (Exception ex) { failed++; failedIds.Add(p.Id); p.Status = "Ошибка — см. журнал"; Log(ex.ToString()); }
+                    SaveHistory(history);
                     p.Selected = false;
                     ShowProgress(String.Format("Обработано программ: {0} из {1}", succeeded + failed, chosen.Count), succeeded + failed, chosen.Count, false);
                 }
@@ -294,6 +302,12 @@ namespace UpdateHub
                 status.Text = "Установка завершена. Автоматически сверяем версии… Если Windows ещё не обновила данные, проверка повторится.";
                 ShowProgress("Установка завершена — сверка версий…", chosen.Count, chosen.Count, true);
                 var verification = await UpdateVerifier.VerifyAsync(successfulIds, LoadPackagesAsync, milliseconds => Task.Delay(milliseconds));
+                foreach (var pending in pendingHistory)
+                {
+                    var observed = verification.Packages == null ? null : verification.Packages.FirstOrDefault(p => String.Equals(p.Id, pending.Key, StringComparison.OrdinalIgnoreCase));
+                    pending.Value.Verify(observed, verification.Error == null);
+                    if (pending.Value.Installed != null) SaveHistory(pending.Value);
+                }
                 if (verification.Packages != null)
                 {
                     ReplacePackages(verification.Packages);
@@ -312,7 +326,12 @@ namespace UpdateHub
                 else status.Text = outcome + "Список обновлён автоматически." + (verification.Pending > 0 ? " Для некоторых программ обновление по-прежнему доступно — Windows могла ещё не обновить данные или установщик не применил новую версию." : "");
                 ShowProgress(verification.Error != null ? "Установка завершена; итоговые версии не подтверждены" : "Готово — список обновлён", chosen.Count, chosen.Count, false);
             }
-            finally { installing = false; SetBusy(false); }
+            finally
+            {
+                installing = false;
+                SetBusy(false);
+                if (historyPage.Visibility == Visibility.Visible) RefreshHistory();
+            }
         }
     }
 

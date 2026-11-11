@@ -28,6 +28,24 @@ public static class Tests
     [STAThread]
     public static void Main(string[] args)
     {
+        string historyPath = Path.Combine(Path.GetTempPath(), "CheckUpdate-history-" + Guid.NewGuid().ToString("N") + ".jsonl");
+        try
+        {
+            var history = new UpdateHistory(historyPath);
+            var entry = new HistoryEntry { Name = "Пример", Before = "1.0", Requested = "2.0", Result = "Версия не подтверждена" };
+            history.Append(entry);
+            entry.Verify(new Package { Installed = "1.0", Available = "2.0" }, true);
+            Check(entry.Installed == null, "stale version is not recorded as installed");
+            File.AppendAllText(historyPath, "{");
+            entry.Verify(new Package { Installed = "2.0" }, true);
+            history.Append(entry);
+            var failed = new HistoryEntry { Name = "Другая программа", Before = "2.0", Requested = "3.0", Result = "Не завершено" };
+            history.Append(failed);
+            var reopened = new UpdateHistory(historyPath).Read();
+            Check(reopened.Count == 2 && reopened.Any(row => row.Id == entry.Id && row.Target == "2.0" && row.Result == "Установлено")
+                && reopened.Any(row => row.Id == failed.Id && row.Result == "Не завершено"), "history survives restart and a truncated line without duplicate attempts");
+        }
+        finally { File.Delete(historyPath); }
         string header = Row("Name", "Id", "Version", "Available") + "\n" + new string('-', 90) + "\n";
         var parsed = Winget.Parse(header + Row("Пример приложения", "Vendor.Example", "< 2.0", "3.0") + "\n" + Row("Other", "Vendor.Other", "1.0", ""));
         Check(parsed.Count == 2 && parsed.Any(p => p.Id == "Vendor.Example" && p.Available == "3.0" && p.Installed == "< 2.0"), "localized names and versions");

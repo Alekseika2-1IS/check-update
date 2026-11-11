@@ -17,7 +17,7 @@ namespace UpdateHub
         public object Convert(object value, Type type, object parameter, CultureInfo culture)
         {
             string text = value as string ?? "";
-            string color = text.Contains("Ошибка") || text.Contains("Не завершено") || text.Contains("всё ещё") ? "#FFBF77"
+            string color = text.Contains("Ошибка") || text.Contains("Не завершено") || text.Contains("всё ещё") || text.Contains("не подтверждена") ? "#FFBF77"
                 : text.Contains("Установлено") ? "#72E7A8" : text.Contains("Без обновлений") ? "#9CAFC7" : "#4FD6F5";
             return new SolidColorBrush((Color)ColorConverter.ConvertFromString(color));
         }
@@ -32,6 +32,11 @@ namespace UpdateHub
         private readonly TextBlock emptyTitle = new TextBlock();
         private readonly TextBlock emptyDescription = new TextBlock();
         private readonly StackPanel emptyState = new StackPanel();
+        private readonly DockPanel historyPage = new DockPanel { Margin = new Thickness(28, 26, 28, 22), Visibility = Visibility.Collapsed };
+        private readonly DataGrid historyTable = new DataGrid();
+        private readonly TextBlock historyMessage = new TextBlock();
+        private readonly UpdateHistory updateHistory = new UpdateHistory(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UpdateHub", "history.jsonl"));
+        private bool historyWriteFailed;
         private static Brush Paint(string hex) { return new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)); }
         [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
 
@@ -87,20 +92,42 @@ namespace UpdateHub
             navigation.Children.Add(Label("РАБОЧАЯ ОБЛАСТЬ", 10, "#758EAE"));
             var updatesLink = new Button { Content = "↻   Обновления", HorizontalContentAlignment = HorizontalAlignment.Left, Background = Paint("#123B50"), BorderBrush = Paint("#20617B"), Margin = new Thickness(0, 12, 0, 8) };
             var allLink = new Button { Content = "▤   Все программы", Background = Brushes.Transparent, BorderBrush = Brushes.Transparent };
+            var historyLink = new Button { Content = "◷   История", Background = Brushes.Transparent, BorderBrush = Brushes.Transparent, Margin = new Thickness(0, 8, 0, 0) };
+            var main = new DockPanel { Margin = new Thickness(28, 26, 28, 22) };
+            Grid.SetColumn(main, 1); shell.Children.Add(main);
+            BuildHistoryPage();
+            Grid.SetColumn(historyPage, 1); shell.Children.Add(historyPage);
+            Action<Button, bool> highlight = (button, selected) =>
+            {
+                button.Background = selected ? Paint("#123B50") : Brushes.Transparent;
+                button.BorderBrush = selected ? Paint("#20617B") : Brushes.Transparent;
+            };
             Action refreshNavigation = () => {
                 bool filtered = onlyUpdates.IsChecked == true;
-                updatesLink.Background = filtered ? Paint("#123B50") : Brushes.Transparent;
-                updatesLink.BorderBrush = filtered ? Paint("#20617B") : Brushes.Transparent;
-                allLink.Background = filtered ? Brushes.Transparent : Paint("#123B50");
-                allLink.BorderBrush = filtered ? Brushes.Transparent : Paint("#20617B");
+                bool showingHistory = historyPage.Visibility == Visibility.Visible;
+                highlight(updatesLink, !showingHistory && filtered);
+                highlight(allLink, !showingHistory && !filtered);
+                highlight(historyLink, showingHistory);
             };
-            updatesLink.Click += (s, e) => { onlyUpdates.IsChecked = true; RefreshView(); refreshNavigation(); };
-            allLink.Click += (s, e) => { onlyUpdates.IsChecked = false; RefreshView(); refreshNavigation(); };
-            navigation.Children.Add(updatesLink); navigation.Children.Add(allLink);
+            Action<bool> showPrograms = filtered =>
+            {
+                historyPage.Visibility = Visibility.Collapsed;
+                main.Visibility = Visibility.Visible;
+                onlyUpdates.IsChecked = filtered;
+                RefreshView(); refreshNavigation();
+            };
+            updatesLink.Click += (s, e) => showPrograms(true);
+            allLink.Click += (s, e) => showPrograms(false);
+            historyLink.Click += (s, e) =>
+            {
+                main.Visibility = Visibility.Collapsed;
+                historyPage.Visibility = Visibility.Visible;
+                RefreshHistory(); refreshNavigation();
+            };
+            navigation.Children.Add(updatesLink); navigation.Children.Add(allLink); navigation.Children.Add(historyLink);
             var catalogNote = Label("Проверка программ\nчерез каталог Windows", 11, "#758EAE"); catalogNote.Margin = new Thickness(0, 24, 0, 0); navigation.Children.Add(catalogNote);
             sidebar.Children.Add(navigation);
 
-            var main = new DockPanel { Margin = new Thickness(28, 26, 28, 22) }; Grid.SetColumn(main, 1); shell.Children.Add(main);
             var heading = new DockPanel { Margin = new Thickness(0, 0, 0, 22) };
             scan.Content = "↻  Проверить обновления"; scan.Padding = new Thickness(16, 12, 16, 12); scan.VerticalAlignment = VerticalAlignment.Center;
             scan.Click += async (s, e) => await ScanAsync(); DockPanel.SetDock(scan, Dock.Right); heading.Children.Add(scan);
@@ -209,6 +236,79 @@ namespace UpdateHub
         private void SelectionChanged(object sender, PropertyChangedEventArgs args)
         {
             if (args.PropertyName == "Selected") RefreshCounters();
+        }
+
+        private void BuildHistoryPage()
+        {
+            var header = new StackPanel { Margin = new Thickness(0, 0, 0, 22) };
+            var title = Label("История обновлений", 27, "#F2F7FF");
+            title.FontWeight = FontWeights.SemiBold;
+            header.Children.Add(title);
+            header.Children.Add(Label("Попытки обновления программ через Check Update", 13, "#9CAFC7"));
+            DockPanel.SetDock(header, Dock.Top);
+            historyPage.Children.Add(header);
+            historyMessage.Foreground = Paint("#A0B0C6");
+            historyMessage.TextWrapping = TextWrapping.Wrap;
+            historyMessage.Margin = new Thickness(0, 0, 0, 14);
+            DockPanel.SetDock(historyMessage, Dock.Top);
+            historyPage.Children.Add(historyMessage);
+
+            historyTable.AutoGenerateColumns = false;
+            historyTable.IsReadOnly = true;
+            historyTable.CanUserAddRows = false;
+            historyTable.RowHeaderWidth = 0;
+            historyTable.RowHeight = 48;
+            historyTable.ColumnHeaderHeight = 42;
+            historyTable.HeadersVisibility = DataGridHeadersVisibility.Column;
+            historyTable.GridLinesVisibility = DataGridGridLinesVisibility.Horizontal;
+            historyTable.HorizontalGridLinesBrush = Paint("#21324A");
+            historyTable.Background = Paint("#111F33");
+            historyTable.BorderThickness = new Thickness(0);
+            var textStyle = new Style(typeof(TextBlock));
+            textStyle.Setters.Add(new Setter(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis));
+            string[] headings = { "ДАТА И ВРЕМЯ", "ПРОГРАММА", "БЫЛА", "НОВАЯ ВЕРСИЯ", "РЕЗУЛЬТАТ" };
+            string[] paths = { "Date", "Name", "Before", "Target", "Result" };
+            int[] widths = { 135, 145, 75, 125, 175 };
+            for (int i = 0; i < headings.Length; i++)
+            {
+                var style = new Style(typeof(TextBlock), textStyle);
+                style.Setters.Add(new Setter(ToolTipProperty, new Binding(paths[i])));
+                if (i == 4) style.Setters.Add(new Setter(TextBlock.ForegroundProperty, new Binding("Result") { Converter = new StatusColor() }));
+                historyTable.Columns.Add(new DataGridTextColumn
+                {
+                    Header = headings[i], Binding = new Binding(paths[i]), ElementStyle = style,
+                    MinWidth = widths[i], Width = new DataGridLength(widths[i], DataGridLengthUnitType.Star)
+                });
+            }
+            historyPage.Children.Add(Card(historyTable, "#111F33", new Thickness(0)));
+        }
+
+        private void SaveHistory(HistoryEntry entry)
+        {
+            try { updateHistory.Append(entry); }
+            catch (Exception ex)
+            {
+                historyWriteFailed = true;
+                Log("Не удалось записать историю обновлений: " + ex.Message);
+            }
+            if (historyPage.Visibility == Visibility.Visible) RefreshHistory();
+        }
+
+        private void RefreshHistory()
+        {
+            try
+            {
+                var entries = updateHistory.Read();
+                historyTable.ItemsSource = entries;
+                historyMessage.Text = historyWriteFailed ? "Часть записей не удалось сохранить. Подробности в журнале."
+                    : entries.Count == 0 ? "Здесь появятся записи после первой попытки обновления программы."
+                    : "«Цель» означает версию, которую пытались установить.";
+            }
+            catch (Exception ex)
+            {
+                historyMessage.Text = "Не удалось прочитать историю. Откройте раздел ещё раз.";
+                Log("Не удалось прочитать историю обновлений: " + ex.Message);
+            }
         }
     }
 }
