@@ -16,7 +16,7 @@ using System.Windows.Media.Imaging;
 
 [assembly: System.Reflection.AssemblyTitle("Check Update")]
 [assembly: System.Reflection.AssemblyProduct("Check Update")]
-[assembly: System.Reflection.AssemblyVersion("0.8.1.0")]
+[assembly: System.Reflection.AssemblyVersion("0.8.2.0")]
 
 namespace UpdateHub
 {
@@ -254,6 +254,11 @@ namespace UpdateHub
                 appVersionStatus.Text = availableRelease == null ? "Новых опубликованных версий нет" : "Доступна версия " + SelfUpdate.ParseVersion(availableRelease.Tag).ToString(3);
                 appUpdate.Content = availableRelease == null ? "Проверить версию" : "↓ Скачать обновление";
                 appUpdate.Background = availableRelease == null ? Paint("#1B304B") : Paint("#145540");
+            }
+            catch (GitHubRateLimitException ex)
+            {
+                Log("Проверка версии приложения: " + ex.Message);
+                appVersionStatus.Text = "GitHub временно ограничил запросы. Проверьте позже.";
             }
             catch (Exception ex) { Log("Проверка версии приложения: " + ex); appVersionStatus.Text = "GitHub недоступен — можно проверить позже"; }
             finally { checkingVersion = false; appUpdate.IsEnabled = !busy && !downloadingApp; }

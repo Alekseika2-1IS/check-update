@@ -28,6 +28,7 @@ public static class Tests
     [STAThread]
     public static void Main(string[] args)
     {
+        CheckRateLimitResponse();
         CheckShortcutIcon();
         string historyPath = Path.Combine(Path.GetTempPath(), "CheckUpdate-history-" + Guid.NewGuid().ToString("N") + ".jsonl");
         try
@@ -193,6 +194,24 @@ public static class Tests
         Console.WriteLine("All " + checks + " checks passed. No updates installed.");
     }
 
+    private static void CheckRateLimitResponse()
+    {
+        var calculate = typeof(SelfUpdate).GetMethod("RateLimitRetryTime", BindingFlags.Static | BindingFlags.NonPublic);
+        var epoch = new DateTimeOffset(1970, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var now = epoch.AddSeconds(1000);
+        using (var response = new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.Forbidden))
+        {
+            Check(calculate.Invoke(null, new object[] { response, now }) == null, "ordinary forbidden response is not reported as a request limit");
+            response.Headers.Add("X-RateLimit-Remaining", "0");
+            response.Headers.Add("X-RateLimit-Reset", "1120");
+            Check((DateTimeOffset)calculate.Invoke(null, new object[] { response, now }) == now.AddMinutes(2),
+                "GitHub rate limit honors the reset time");
+            response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(45));
+            Check((DateTimeOffset)calculate.Invoke(null, new object[] { response, now }) == now.AddSeconds(45),
+                "explicit GitHub retry delay takes priority");
+        }
+    }
+
     private sealed class EffectButton : System.Windows.Controls.Button
     {
         public void SetPressed(bool pressed) { IsPressed = pressed; }
@@ -214,11 +233,18 @@ public static class Tests
         var style = (Style)window.FindResource("StatusBadge");
         var available = new System.Windows.Controls.ContentControl { Content = "Есть обновление", Tag = true, Style = style };
         var installed = new System.Windows.Controls.ContentControl { Content = "Установлено", Tag = true, Style = style };
+        var current = new System.Windows.Controls.ContentControl { Content = "Без обновлений", Tag = true, Style = style };
+        var metric = (System.Windows.Controls.Border)typeof(MainWindow).GetMethod("Metric", BindingFlags.Instance | BindingFlags.NonPublic)
+            .Invoke(window, new object[] { new System.Windows.Controls.TextBlock(), "Программ найдено", "#EDF4FC" });
+        var metricSheen = (System.Windows.Controls.Border)((System.Windows.Controls.Grid)metric.Child).Children[0];
+        metricSheen.Tag = true;
         var button = new EffectButton { Content = "Проверить обновления", Tag = true, Style = (Style)window.FindResource("AnimatedButton") };
         panel.Children.Add(available);
         panel.Children.Add(installed);
+        panel.Children.Add(current);
+        panel.Children.Add(metric);
         panel.Children.Add(button);
-        var preview = new Window { Content = panel, Width = 300, Height = 180, ShowActivated = false, Left = -10000, Top = -10000 };
+        var preview = new Window { Content = panel, Width = 300, Height = 280, ShowActivated = false, Left = -10000, Top = -10000 };
         preview.Show();
         preview.UpdateLayout();
         WaitForAnimation(100);
@@ -226,15 +252,19 @@ public static class Tests
         {
             var blue = (System.Windows.Controls.Border)available.Template.FindName("BadgeShimmer", available);
             var green = (System.Windows.Controls.Border)installed.Template.FindName("BadgeShimmer", installed);
+            var silver = (System.Windows.Controls.Border)current.Template.FindName("BadgeShimmer", current);
             var blueBrush = (LinearGradientBrush)blue.Background;
             var greenBrush = (LinearGradientBrush)green.Background;
             Check(blue.IsVisible && green.IsVisible && blueBrush.GradientStops[1].Color != greenBrush.GradientStops[1].Color,
                 "available and installed badges display distinct highlights");
             Check(blueBrush.RelativeTransform.HasAnimatedProperties && greenBrush.RelativeTransform.HasAnimatedProperties,
                 "both status highlights animate");
-            available.Content = "Без обновлений";
+            Check(silver.IsVisible && ((LinearGradientBrush)silver.Background).RelativeTransform.HasAnimatedProperties, "current version badge has its own shimmer");
+            Check(metricSheen.Opacity > 0 && ((LinearGradientBrush)metricSheen.Background).RelativeTransform.HasAnimatedProperties, "summary card shimmer runs");
+            available.Content = "Не завершено";
             installed.Tag = false;
-            Check(blue.Visibility == Visibility.Collapsed && green.Visibility == Visibility.Collapsed,
+            metricSheen.Tag = false;
+            Check(blue.Visibility == Visibility.Collapsed && green.Visibility == Visibility.Collapsed && metricSheen.Opacity == 0,
                 "inactive statuses and disabled motion suppress shimmer");
             button.SetPressed(true);
             WaitForAnimation(140);

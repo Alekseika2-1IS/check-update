@@ -114,6 +114,19 @@
             <Trigger Property="Content" Value="Есть обновление">
               <Setter TargetName="BadgeSurface" Property="Background" Value="#123749"/>
             </Trigger>
+            <Trigger Property="Content" Value="Без обновлений">
+              <Setter TargetName="BadgeSurface" Property="Background" Value="#253143"/>
+              <Setter TargetName="BadgeShimmer" Property="Background">
+                <Setter.Value>
+                  <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                    <LinearGradientBrush.RelativeTransform><TranslateTransform X="-0.8"/></LinearGradientBrush.RelativeTransform>
+                    <GradientStop Color="#00D5E5FA" Offset="0.18"/>
+                    <GradientStop Color="#46D5E5FA" Offset="0.50"/>
+                    <GradientStop Color="#00D5E5FA" Offset="0.82"/>
+                  </LinearGradientBrush>
+                </Setter.Value>
+              </Setter>
+            </Trigger>
             <Trigger Property="Content" Value="Установлено">
               <Setter TargetName="BadgeSurface" Property="Background" Value="#163D34"/>
               <Setter TargetName="BadgeShimmer" Property="Background">
@@ -147,10 +160,47 @@
               <MultiTrigger.EnterActions><BeginStoryboard x:Name="InstalledSweep" Storyboard="{StaticResource BadgeSweep}"/></MultiTrigger.EnterActions>
               <MultiTrigger.ExitActions><RemoveStoryboard BeginStoryboardName="InstalledSweep"/></MultiTrigger.ExitActions>
             </MultiTrigger>
+            <MultiTrigger>
+              <MultiTrigger.Conditions>
+                <Condition Property="Content" Value="Без обновлений"/>
+                <Condition Property="Tag"><Condition.Value><sys:Boolean>True</sys:Boolean></Condition.Value></Condition>
+                <Condition Property="IsVisible" Value="True"/>
+              </MultiTrigger.Conditions>
+              <Setter TargetName="BadgeShimmer" Property="Visibility" Value="Visible"/>
+              <MultiTrigger.EnterActions><BeginStoryboard x:Name="CurrentSweep" Storyboard="{StaticResource BadgeSweep}"/></MultiTrigger.EnterActions>
+              <MultiTrigger.ExitActions><RemoveStoryboard BeginStoryboardName="CurrentSweep"/></MultiTrigger.ExitActions>
+            </MultiTrigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
     </Setter>
+  </Style>
+  <Style x:Key="MetricShimmer" TargetType="Border">
+    <Setter Property="IsHitTestVisible" Value="False"/>
+    <Setter Property="CornerRadius" Value="11"/>
+    <Setter Property="Opacity" Value="0"/>
+    <Setter Property="Tag" Value="{DynamicResource {x:Static SystemParameters.ClientAreaAnimationKey}}"/>
+    <Style.Triggers>
+      <MultiTrigger>
+        <MultiTrigger.Conditions>
+          <Condition Property="Tag"><Condition.Value><sys:Boolean>True</sys:Boolean></Condition.Value></Condition>
+          <Condition Property="IsVisible" Value="True"/>
+        </MultiTrigger.Conditions>
+        <Setter Property="Opacity" Value="1"/>
+        <MultiTrigger.EnterActions>
+          <BeginStoryboard x:Name="MetricSweep">
+            <Storyboard RepeatBehavior="Forever">
+              <DoubleAnimationUsingKeyFrames Storyboard.TargetProperty="(Border.Background).(Brush.RelativeTransform).(TranslateTransform.X)">
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0" Value="-0.75"/>
+                <LinearDoubleKeyFrame KeyTime="0:0:2.3" Value="0.75"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:6" Value="0.75"/>
+              </DoubleAnimationUsingKeyFrames>
+            </Storyboard>
+          </BeginStoryboard>
+        </MultiTrigger.EnterActions>
+        <MultiTrigger.ExitActions><RemoveStoryboard BeginStoryboardName="MetricSweep"/></MultiTrigger.ExitActions>
+      </MultiTrigger>
+    </Style.Triggers>
   </Style>
   <Style TargetType="TextBox">
     <Setter Property="Foreground" Value="{StaticResource Text}"/>

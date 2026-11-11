@@ -54,7 +54,7 @@ namespace UpdateHub
             return new TextBlock { Text = text, FontSize = size, Foreground = Paint(color), TextWrapping = TextWrapping.Wrap };
         }
 
-        private static Border Metric(TextBlock value, string caption, string accent)
+        private Border Metric(TextBlock value, string caption, string accent)
         {
             var panel = new StackPanel();
             panel.Children.Add(Label(caption, 12, "#B5C2D6"));
@@ -64,7 +64,16 @@ namespace UpdateHub
             value.Foreground = Paint(accent);
             value.Margin = new Thickness(0, 4, 0, 0);
             panel.Children.Add(value);
-            var card = Card(panel, "#151E2E", new Thickness(16, 12, 16, 12));
+            var content = new Grid();
+            var tint = (Color)ColorConverter.ConvertFromString(accent);
+            var sheen = new LinearGradientBrush { StartPoint = new Point(0, 0.3), EndPoint = new Point(1, 0.7), RelativeTransform = new TranslateTransform(-0.75, 0) };
+            sheen.GradientStops.Add(new GradientStop(Color.FromArgb(0, tint.R, tint.G, tint.B), 0.28));
+            sheen.GradientStops.Add(new GradientStop(Color.FromArgb(36, tint.R, tint.G, tint.B), 0.5));
+            sheen.GradientStops.Add(new GradientStop(Color.FromArgb(0, tint.R, tint.G, tint.B), 0.72));
+            content.Children.Add(new Border { Background = sheen, Style = (Style)FindResource("MetricShimmer") });
+            panel.Margin = new Thickness(16, 12, 16, 12);
+            content.Children.Add(panel);
+            var card = Card(content, "#151E2E", new Thickness(0));
             card.Background = new LinearGradientBrush(
                 (Color)ColorConverter.ConvertFromString("#1A2639"),
                 (Color)ColorConverter.ConvertFromString("#131C2B"), 35);

@@ -13,6 +13,10 @@ using System.Threading.Tasks;
 
 namespace UpdateHub
 {
+    public sealed class GitHubRateLimitException : HttpRequestException
+    {
+        public GitHubRateLimitException() : base("GitHub временно ограничил число запросов.") { }
+    }
     [DataContract]
     public class ReleaseAsset
     {
@@ -75,15 +79,48 @@ namespace UpdateHub
             return client;
         }
 
+        private static DateTimeOffset nextVersionCheck;
+
         public static async Task<AppRelease> CheckAsync()
         {
+            if (DateTimeOffset.UtcNow < nextVersionCheck) throw new GitHubRateLimitException();
             using (var client = Client())
             using (var response = await client.GetAsync("https://api.github.com/repos/" + Repository + "/releases/latest"))
             {
                 if (response.StatusCode == HttpStatusCode.NotFound) return null;
+                var retryAt = RateLimitRetryTime(response, DateTimeOffset.UtcNow);
+                if (retryAt.HasValue)
+                {
+                    nextVersionCheck = retryAt.Value;
+                    throw new GitHubRateLimitException();
+                }
                 response.EnsureSuccessStatusCode();
                 return ParseRelease(await response.Content.ReadAsStringAsync(), CurrentVersion);
             }
+        }
+
+        private static DateTimeOffset? RateLimitRetryTime(HttpResponseMessage response, DateTimeOffset now)
+        {
+            if (response.StatusCode != HttpStatusCode.Forbidden && (int)response.StatusCode != 429) return null;
+            IEnumerable<string> remaining;
+            bool exhausted = response.Headers.TryGetValues("X-RateLimit-Remaining", out remaining) && remaining.Contains("0");
+            var retry = response.Headers.RetryAfter;
+            if (!exhausted && retry == null && (int)response.StatusCode != 429 &&
+                (response.ReasonPhrase ?? "").IndexOf("rate limit", StringComparison.OrdinalIgnoreCase) < 0) return null;
+            if (retry != null)
+            {
+                if (retry.Delta.HasValue && retry.Delta.Value > TimeSpan.Zero) return now + retry.Delta.Value;
+                if (retry.Date.HasValue && retry.Date.Value > now) return retry.Date.Value;
+            }
+            IEnumerable<string> reset;
+            long seconds;
+            if (exhausted && response.Headers.TryGetValues("X-RateLimit-Reset", out reset) &&
+                Int64.TryParse(reset.FirstOrDefault(), out seconds) && seconds >= 0 && seconds <= 253402300799)
+            {
+                var resetTime = new DateTimeOffset(1970, 1, 1, 0, 0, 0, TimeSpan.Zero).AddSeconds(seconds);
+                if (resetTime > now) return resetTime;
+            }
+            return now.AddMinutes(1);
         }
 
         public static string Hash(string path)
