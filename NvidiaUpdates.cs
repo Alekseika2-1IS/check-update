@@ -12,6 +12,14 @@ using System.Threading.Tasks;
 
 namespace UpdateHub
 {
+    public sealed class NvidiaUpdateReport
+    {
+        public readonly List<string> Lines = new List<string>();
+        public bool HasAdapter;
+        public bool HasUpdate;
+        public bool Complete = true;
+    }
+
     public static class NvidiaUpdates
     {
         private const string Catalog = "https://gfwsl.geforce.com/nvidia_web_services/controller.gfeclientcontent.NG.php/com.nvidia.services.GFEClientContent_NG.getDispDrvrByDevid/";
@@ -61,6 +69,18 @@ namespace UpdateHub
             public Version Installed;
         }
 
+        private sealed class ChannelResult
+        {
+            public readonly string Message;
+            public readonly bool? HasUpdate;
+
+            public ChannelResult(string message, bool? hasUpdate = null)
+            {
+                Message = message;
+                HasUpdate = hasUpdate;
+            }
+        }
+
         private static readonly Regex VendorVersion = new Regex(@"^\d{2,4}\.\d{2}$", RegexOptions.CultureInvariant);
 
         public static Version InstalledVersion(string text)
@@ -92,7 +112,7 @@ namespace UpdateHub
             }
         }
 
-        public static async Task<List<string>> ScanAsync()
+        public static async Task<NvidiaUpdateReport> ScanAsync()
         {
             var adapters = new List<Adapter>();
             using (var search = new ManagementObjectSearcher("SELECT Name, PNPDeviceID, DriverVersion FROM Win32_VideoController"))
@@ -112,7 +132,12 @@ namespace UpdateHub
                     });
                 }
             }
-            if (adapters.Count == 0) return new List<string> { "Видеокарта NVIDIA не обнаружена." };
+            var report = new NvidiaUpdateReport { HasAdapter = adapters.Count > 0 };
+            if (!report.HasAdapter)
+            {
+                report.Lines.Add("Видеокарта NVIDIA не обнаружена.");
+                return report;
+            }
 
             string osBuild = "";
             using (var search = new ManagementObjectSearcher("SELECT BuildNumber FROM Win32_OperatingSystem"))
@@ -129,21 +154,27 @@ namespace UpdateHub
                 foreach (ManagementObject item in results)
                 using (item) { mobile = Convert.ToInt32(item["PCSystemType"]) == 2; break; }
 
-            var messages = new List<string>();
             foreach (var adapter in adapters)
             {
-                messages.Add(adapter.Name + (adapter.Installed == null ? "" : " · установлено " + DisplayVersion(adapter.Installed)));
+                report.Lines.Add(adapter.Name + (adapter.Installed == null ? "" : " · установлено " + DisplayVersion(adapter.Installed)));
                 if (adapter.Device == null || adapter.Installed == null)
                 {
-                    messages.Add("Не удалось определить модель или версию драйвера для проверки.");
+                    report.Lines.Add("Не удалось определить модель или версию драйвера для проверки.");
+                    report.Complete = false;
                     continue;
                 }
-                messages.AddRange(await Task.WhenAll(CheckChannelAsync(adapter, build, mobile, false), CheckChannelAsync(adapter, build, mobile, true)).ConfigureAwait(false));
+                var channels = await Task.WhenAll(CheckChannelAsync(adapter, build, mobile, false), CheckChannelAsync(adapter, build, mobile, true)).ConfigureAwait(false);
+                foreach (var channel in channels)
+                {
+                    report.Lines.Add(channel.Message);
+                    report.HasUpdate |= channel.HasUpdate == true;
+                    report.Complete &= channel.HasUpdate.HasValue;
+                }
             }
-            return messages;
+            return report;
         }
 
-        private static async Task<string> CheckChannelAsync(Adapter adapter, int build, bool mobile, bool studio)
+        private static async Task<ChannelResult> CheckChannelAsync(Adapter adapter, int build, bool mobile, bool studio)
         {
             string channel = studio ? "Studio" : "Game Ready";
             string branch = studio ? "1" : "0";
@@ -159,15 +190,15 @@ namespace UpdateHub
                     {
                         response.EnsureSuccessStatusCode();
                         var available = ReadOffer(await response.Content.ReadAsStringAsync().ConfigureAwait(false), adapter.Device, studio);
-                        if (available == null) return channel + " · каталог не подтвердил совместимый выпуск.";
-                        if (available > adapter.Installed) return channel + " · доступна версия " + DisplayVersion(available);
-                        return channel + " · в каталоге " + DisplayVersion(available) + ", новее установленной версии нет.";
+                        if (available == null) return new ChannelResult(channel + " · каталог не подтвердил совместимый выпуск.");
+                        if (available > adapter.Installed) return new ChannelResult(channel + " · доступна версия " + DisplayVersion(available), true);
+                        return new ChannelResult(channel + " · в каталоге " + DisplayVersion(available) + ", новее установленной версии нет.", false);
                     }
                 }
             }
-            catch (HttpRequestException) { return channel + " · каталог NVIDIA недоступен. Попробуйте позднее."; }
-            catch (TaskCanceledException) { return channel + " · каталог NVIDIA не ответил вовремя."; }
-            catch (SerializationException) { return channel + " · ответ каталога NVIDIA не распознан."; }
+            catch (HttpRequestException) { return new ChannelResult(channel + " · каталог NVIDIA недоступен. Попробуйте позднее."); }
+            catch (TaskCanceledException) { return new ChannelResult(channel + " · каталог NVIDIA не ответил вовремя."); }
+            catch (SerializationException) { return new ChannelResult(channel + " · ответ каталога NVIDIA не распознан."); }
         }
 
         private static string DisplayVersion(Version version)

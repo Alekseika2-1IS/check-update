@@ -226,9 +226,62 @@ public static class Tests
             while ((bool)checkingSystem.GetValue(window) && DateTime.UtcNow < deadline) WaitForAnimation(100);
             Check(!(bool)checkingSystem.GetValue(window), "system checks finish independently of the program scan");
         }
+        if (target.CanUpdate) CheckMaintenanceCard(window, target);
         CheckSidebarNavigation(window);
         window.Close(); app.Shutdown();
         Console.WriteLine("All " + checks + " checks passed. No updates installed.");
+    }
+
+    private static void CheckMaintenanceCard(MainWindow window, Package target)
+    {
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var type = typeof(MainWindow);
+        var action = (System.Windows.Controls.Button)type.GetField("maintenanceAction", flags).GetValue(window);
+        var headline = (System.Windows.Controls.TextBlock)type.GetField("maintenanceTitle", flags).GetValue(window);
+        var summary = (System.Windows.Controls.TextBlock)type.GetField("maintenanceSummary", flags).GetValue(window);
+        var system = (System.Windows.Controls.TextBlock)type.GetField("maintenanceSystem", flags).GetValue(window);
+        var attempts = (System.Collections.Generic.List<HistoryEntry>)type.GetField("maintenanceAttempts", flags).GetValue(window);
+        var refresh = type.GetMethod("RefreshMaintenance", flags);
+        var table = (System.Windows.Controls.DataGrid)type.GetField("table", flags).GetValue(window);
+        table.SelectedItem = null;
+        var status = (System.Windows.Controls.TextBlock)type.GetField("status", flags).GetValue(window);
+        status.Text = "Проверка завершена.";
+        var windows = new SystemUpdateReport { RestartRequired = true };
+        windows.Windows.Add("Обновление Windows");
+        type.GetField("windowsReport", flags).SetValue(window, windows);
+        type.GetField("windowsChecked", flags).SetValue(window, true);
+        type.GetField("nvidiaReport", flags).SetValue(window, new NvidiaUpdateReport { HasAdapter = true, HasUpdate = true });
+        type.GetField("nvidiaChecked", flags).SetValue(window, true);
+        refresh.Invoke(window, null);
+        Check(summary.Text.Contains("Программ к обновлению") && (string)action.Content == "Обновить все программы"
+            && system.Text.Contains("нужна перезагрузка") && system.Text.Contains("NVIDIA: доступен драйвер"),
+            "maintenance card summarizes available programs, restart and NVIDIA driver");
+        Capture(window, "preview-maintenance.png");
+
+        type.GetField("windowsReport", flags).SetValue(window, null);
+        type.GetField("nvidiaReport", flags).SetValue(window, new NvidiaUpdateReport { HasAdapter = true, Complete = false });
+        refresh.Invoke(window, null);
+        Check(system.Text.Contains("Windows: проверка не удалась") && system.Text.Contains("NVIDIA: проверка неполная"),
+            "maintenance card distinguishes failed and partial checks from up-to-date results");
+
+        var failed = new HistoryEntry { PackageId = target.Id, Name = target.Name, Result = "Не завершено", Detail = "Закройте программу и повторите обновление." };
+        var pending = new HistoryEntry { Name = "Вторая программа", Result = "Версия не подтверждена" };
+        attempts.Add(failed);
+        attempts.Add(pending);
+        attempts.Add(new HistoryEntry { Name = "Третья программа", Result = "Установлено" });
+        refresh.Invoke(window, null);
+        Check(headline.Text == "Итог сеанса" && summary.Text == "Обновлено: 1 · Не удалось: 1 · Не подтверждено: 1"
+            && (string)action.Content == "Повторить обновление" && system.Text.Contains(failed.Detail),
+            "maintenance result shows the three outcomes and the next retry");
+        status.Text = "Список обновлён автоматически.";
+        Capture(window, "preview-maintenance-result.png");
+        target.Skipped = true;
+        refresh.Invoke(window, null);
+        Check((string)action.Content == "Сверить версию", "maintenance card skips ignored versions when offering recovery");
+        attempts.Remove(pending);
+        refresh.Invoke(window, null);
+        Check(action.Visibility == Visibility.Collapsed, "maintenance card does not offer recovery for an ignored update");
+        target.Skipped = false;
     }
 
     private static void CheckUpdateControls(MainWindow window, System.Windows.Controls.CheckBox select)
@@ -255,7 +308,7 @@ public static class Tests
         var scan = (System.Windows.Controls.Button)typeof(MainWindow).GetField("scan", flags).GetValue(window);
         var download = (System.Windows.Controls.Button)typeof(MainWindow).GetField("appUpdate", flags).GetValue(window);
         var showRelease = typeof(MainWindow).GetMethod("ShowAppRelease", flags);
-        showRelease.Invoke(window, new object[] { new AppRelease { Tag = "v0.9.3" } });
+        showRelease.Invoke(window, new object[] { new AppRelease { Tag = "v0.10.1" } });
         Check(UpdateIcon(scan) != UpdateIcon(download)
             && System.Windows.Automation.AutomationProperties.GetName(download) == "Скачать обновление",
             "scan and download have distinct vector icons and an accessible download name");

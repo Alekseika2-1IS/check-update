@@ -87,6 +87,12 @@ namespace UpdateHub
         private readonly StackPanel nvidiaResults = new StackPanel();
         private readonly StackPanel nvidiaCatalogResults = new StackPanel();
         private bool checkingSystem;
+        private bool checkingWindows;
+        private bool checkingNvidia;
+        private bool windowsChecked;
+        private bool nvidiaChecked;
+        private SystemUpdateReport windowsReport;
+        private NvidiaUpdateReport nvidiaReport;
 
         private void BuildSystemPage()
         {
@@ -154,6 +160,9 @@ namespace UpdateHub
 
         private async Task CheckWindowsAsync()
         {
+            checkingWindows = true;
+            windowsReport = null;
+            RefreshMaintenance();
             systemStatus.Text = "Windows Update проверяет доступные обновления…";
             windowsResults.Children.Clear();
             nvidiaResults.Children.Clear();
@@ -162,7 +171,7 @@ namespace UpdateHub
             {
                 if (await Task.WhenAny(systemSearch, Task.Delay(TimeSpan.FromMinutes(2))) != systemSearch)
                     systemStatus.Text = "Windows Update отвечает дольше обычного. Проверка ещё идёт.";
-                var report = await systemSearch;
+                var report = windowsReport = await systemSearch;
                 systemStatus.Text = (report.Partial ? "Windows Update вернул неполный список." : "Проверка Windows Update завершена.")
                     + (report.RestartRequired ? " Windows требуется перезагрузка." : "");
                 ShowSystemResults(windowsResults, report.Windows, report.Partial ? "" : "Доступных обновлений не найдено.");
@@ -179,16 +188,20 @@ namespace UpdateHub
                 systemStatus.Text = "Не удалось проверить Windows Update. Повторите проверку или откройте настройки Windows.";
                 nvidiaResults.Children.Clear();
             }
+            finally { checkingWindows = false; windowsChecked = true; RefreshMaintenance(); }
         }
 
         private async Task CheckNvidiaAsync()
         {
+            checkingNvidia = true;
+            nvidiaReport = null;
+            RefreshMaintenance();
             nvidiaCatalogResults.Children.Clear();
             nvidiaCatalogResults.Children.Add(Label("Проверяем каталог NVIDIA…", 13, "#9CAFC7"));
             try
             {
-                var lines = await Task.Run(() => NvidiaUpdates.ScanAsync());
-                ShowSystemResults(nvidiaCatalogResults, lines, "");
+                nvidiaReport = await Task.Run(() => NvidiaUpdates.ScanAsync());
+                ShowSystemResults(nvidiaCatalogResults, nvidiaReport.Lines, "");
             }
             catch (Exception ex)
             {
@@ -196,6 +209,7 @@ namespace UpdateHub
                 nvidiaCatalogResults.Children.Clear();
                 nvidiaCatalogResults.Children.Add(Label("Не удалось проверить драйвер NVIDIA. Повторите проверку или откройте NVIDIA App.", 13, "#9CAFC7"));
             }
+            finally { checkingNvidia = false; nvidiaChecked = true; RefreshMaintenance(); }
         }
 
         private static void ShowSystemResults(StackPanel panel, List<string> titles, string emptyMessage)

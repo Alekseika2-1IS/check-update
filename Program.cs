@@ -16,7 +16,7 @@ using System.Windows.Media.Imaging;
 
 [assembly: System.Reflection.AssemblyTitle("Check Update")]
 [assembly: System.Reflection.AssemblyProduct("Check Update")]
-[assembly: System.Reflection.AssemblyVersion("0.9.2.0")]
+[assembly: System.Reflection.AssemblyVersion("0.10.0.0")]
 
 namespace UpdateHub
 {
@@ -248,6 +248,7 @@ namespace UpdateHub
             appUpdate.IsEnabled = !value && !checkingVersion && !downloadingApp;
             table.IsEnabled = !value; selectAll.IsEnabled = !value; onlyUpdates.IsEnabled = !value;
             if (!value) progress.IsIndeterminate = false;
+            RefreshMaintenance();
         }
 
         private bool MatchesFilter(Package package)
@@ -329,9 +330,11 @@ namespace UpdateHub
             packages.Clear();
             LoadSkippedVersions(found);
             foreach (var p in found) { p.PropertyChanged += SelectionChanged; packages.Add(p); }
+            programsScanned = true;
+            programScanFailed = false;
             ShowAttempts(previousAttempts.Where(entry => entry.CanRetry || entry.CanRecheck));
             selectAll.IsChecked = false;
-            RefreshCounters(); RefreshView();
+            RefreshCounters(); RefreshView(); RefreshMaintenance();
         }
 
         private void ShowAttempts(IEnumerable<HistoryEntry> attempts)
@@ -367,6 +370,8 @@ namespace UpdateHub
                 {
                     attempt.Verify(current, true);
                     if (attempt.Installed != null) SaveHistory(attempt);
+                    int sessionIndex = maintenanceAttempts.FindIndex(entry => entry.Id == attempt.Id);
+                    if (sessionIndex >= 0) maintenanceAttempts[sessionIndex] = attempt;
                     ShowAttempts(new[] { attempt });
                     status.Text = attempt.Name + ": " + attempt.Result + ".";
                 }
@@ -388,13 +393,16 @@ namespace UpdateHub
                 SetBusy(false);
             }
             if (attempt.CanRetry && current != null && current.CanSelect)
-                await InstallUpdatesAsync(new List<Package> { current });
+                await InstallUpdatesAsync(new List<Package> { current }, maintenanceAttempts.Any(entry => entry.Id == attempt.Id));
         }
 
         private async Task ScanAsync()
         {
-            var systemScan = CheckSystemUpdatesAsync();
+            maintenanceAttempts.Clear();
+            scanningPrograms = true;
+            programScanFailed = false;
             SetBusy(true); status.Text = "Проверяем каталог Windows… Это может занять до двух минут.";
+            var systemScan = CheckSystemUpdatesAsync();
             ShowProgress("Проверка доступных обновлений…", 0, 1, true);
             try
             {
@@ -402,9 +410,9 @@ namespace UpdateHub
                 ShowProgress("Проверка завершена", 1, 1, false);
                 status.Text = "Показаны программы, распознанные Windows.";
             }
-            catch (Win32Exception) { progressText.Text = "Проверка не завершена"; status.Text = "WinGet не найден. Установите или обновите «Установщик приложений» в Microsoft Store."; }
-            catch (Exception ex) { progressText.Text = "Проверка не завершена"; Log(ex.ToString()); status.Text = ex.Message; }
-            finally { SetBusy(false); }
+            catch (Win32Exception) { programScanFailed = true; progressText.Text = "Проверка не завершена"; status.Text = "WinGet не найден. Установите или обновите «Установщик приложений» в Microsoft Store."; }
+            catch (Exception ex) { programScanFailed = true; progressText.Text = "Проверка не завершена"; Log(ex.ToString()); status.Text = ex.Message; }
+            finally { scanningPrograms = false; SetBusy(false); }
             await systemScan;
         }
 
@@ -416,10 +424,12 @@ namespace UpdateHub
             await InstallUpdatesAsync(chosen);
         }
 
-        private async Task InstallUpdatesAsync(List<Package> chosen)
+        private async Task InstallUpdatesAsync(List<Package> chosen, bool continueSession = false)
         {
             string list = String.Join("\n", chosen.Select(p => "• " + p.Name + " → " + p.Available));
             if (MessageBox.Show(this, "Обновить выбранные программы?\n\n" + list + "\n\nСохраните работу в этих программах. Продолжая, вы принимаете лицензионные условия выбранных обновлений. Установщики могут запросить права администратора.", "Подтверждение обновлений", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+            if (!continueSession) maintenanceAttempts.Clear();
+            maintenanceQueueSize = chosen.Count;
             installing = true; SetBusy(true); int succeeded = 0; int failed = 0;
             ShowProgress("Подготовка обновлений…", 0, chosen.Count, false);
             var successfulIds = new List<string>();
@@ -496,6 +506,13 @@ namespace UpdateHub
             }
             finally
             {
+                foreach (var attempt in attempts)
+                {
+                    int index = maintenanceAttempts.FindIndex(entry => String.Equals(entry.PackageId, attempt.PackageId, StringComparison.OrdinalIgnoreCase));
+                    if (index < 0) maintenanceAttempts.Add(attempt);
+                    else maintenanceAttempts[index] = attempt;
+                }
+                maintenanceQueueSize = 0;
                 installing = false;
                 SetBusy(false);
                 if (historyPage.Visibility == Visibility.Visible) RefreshHistory();

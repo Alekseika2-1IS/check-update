@@ -190,6 +190,7 @@ namespace UpdateHub
             Grid.SetColumn(historyPage, 1); shell.Children.Add(historyPage);
             BuildSystemPage();
             Grid.SetColumn(systemPage, 1); shell.Children.Add(systemPage);
+            var maintenanceCard = BuildMaintenanceCard();
             Action<Button, bool> highlight = (button, selected) =>
             {
                 button.Background = selected ? Paint("#123B50") : Brushes.Transparent;
@@ -199,6 +200,7 @@ namespace UpdateHub
             };
             Action refreshNavigation = () => {
                 bool filtered = onlyUpdates.IsChecked == true;
+                maintenanceCard.Visibility = filtered ? Visibility.Visible : Visibility.Collapsed;
                 bool showingHistory = historyPage.Visibility == Visibility.Visible;
                 highlight(updatesLink, main.Visibility == Visibility.Visible && filtered);
                 highlight(allLink, main.Visibility == Visibility.Visible && !filtered);
@@ -255,6 +257,7 @@ namespace UpdateHub
             title.Margin = new Thickness(0, 2, 12, 2);
             headingText.Children.Add(title);
             heading.Children.Add(headingText); DockPanel.SetDock(heading, Dock.Top); main.Children.Add(heading);
+            DockPanel.SetDock(maintenanceCard, Dock.Top); main.Children.Add(maintenanceCard);
 
             var metrics = new Grid { Margin = new Thickness(0, 0, 0, 18) };
             for (int i = 0; i < 3; i++) metrics.ColumnDefinitions.Add(new ColumnDefinition());
@@ -449,6 +452,7 @@ namespace UpdateHub
             selectAll.IsChecked = false;
             RefreshView();
             RefreshCounters();
+            RefreshMaintenance();
             RefreshSkipButton();
             status.Text = skip ? package.Name + " " + package.Available + " пропущена. Вернуть её можно в разделе «Все программы»."
                 : "Обновление для " + package.Name + " снова доступно.";
