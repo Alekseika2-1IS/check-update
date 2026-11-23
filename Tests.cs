@@ -224,14 +224,30 @@ public static class Tests
             var deadline = DateTime.UtcNow.AddSeconds(130);
             while ((bool)checkingSystem.GetValue(window) && DateTime.UtcNow < deadline) WaitForAnimation(100);
             Check(!(bool)checkingSystem.GetValue(window), "system checks finish independently of the program scan");
-            var system = (FrameworkElement)typeof(MainWindow).GetField("systemPage", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
-            var shell = (System.Windows.Controls.Panel)system.Parent;
-            foreach (UIElement element in shell.Children)
-                if (System.Windows.Controls.Grid.GetColumn(element) == 1) element.Visibility = element == system ? Visibility.Visible : Visibility.Collapsed;
-            Capture(window, "preview-system.png");
         }
+        CheckSidebarNavigation(window);
         window.Close(); app.Shutdown();
         Console.WriteLine("All " + checks + " checks passed. No updates installed.");
+    }
+
+    private static void CheckSidebarNavigation(MainWindow window)
+    {
+        var shell = (System.Windows.Controls.Grid)window.Content;
+        var sidebar = (System.Windows.Controls.DockPanel)((System.Windows.Controls.Border)shell.Children[0]).Child;
+        var list = (System.Windows.Controls.StackPanel)sidebar.Children[2];
+        var links = list.Children.OfType<System.Windows.Controls.Button>().ToArray();
+        var pages = new[] { shell.Children[1], shell.Children[1], shell.Children[2], shell.Children[3] };
+        string[] names = { "Обновления", "Все программы", "История", "Windows и NVIDIA" };
+        Check(links.Select(System.Windows.Automation.AutomationProperties.GetName).SequenceEqual(names),
+            "sidebar buttons expose their labels to accessibility tools");
+        for (int i = 0; i < links.Length; i++)
+        {
+            links[i].RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            Check(pages[i].IsVisible &&
+                links.Where(link => System.Windows.Automation.AutomationProperties.GetItemStatus(link) == "Выбран раздел").SequenceEqual(new[] { links[i] }),
+                "sidebar opens and highlights " + names[i]);
+        }
+        Capture(window, "preview-system.png");
     }
 
     private static void CheckRateLimitResponse()

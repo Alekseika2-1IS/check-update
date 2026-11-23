@@ -58,6 +58,34 @@ namespace UpdateHub
             return new TextBlock { Text = text, FontSize = size, Foreground = Paint(color), TextWrapping = TextWrapping.Wrap };
         }
 
+        private static Button NavigationButton(string title, string outline)
+        {
+            var button = new Button
+            {
+                Padding = new Thickness(12, 0, 10, 0),
+                Margin = new Thickness(0, 0, 0, 5),
+                MinHeight = 44,
+                HorizontalContentAlignment = HorizontalAlignment.Left
+            };
+            System.Windows.Automation.AutomationProperties.SetName(button, title);
+            var icon = new System.Windows.Shapes.Path
+            {
+                Data = Geometry.Parse(outline),
+                StrokeThickness = 1.65,
+                StrokeStartLineCap = PenLineCap.Round,
+                StrokeEndLineCap = PenLineCap.Round,
+                StrokeLineJoin = PenLineJoin.Round
+            };
+            icon.SetBinding(System.Windows.Shapes.Shape.StrokeProperty, new Binding("Foreground") { Source = button });
+            var iconSlot = new Canvas { Width = 24, Height = 24, Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
+            iconSlot.Children.Add(icon);
+            var content = new StackPanel { Orientation = Orientation.Horizontal };
+            content.Children.Add(iconSlot);
+            content.Children.Add(new TextBlock { Text = title, VerticalAlignment = VerticalAlignment.Center });
+            button.Content = content;
+            return button;
+        }
+
         private Border Metric(TextBlock value, string caption, string accent)
         {
             var panel = new StackPanel();
@@ -119,10 +147,17 @@ namespace UpdateHub
             var appCard = Card(appCardContent, "#172234", new Thickness(13)); DockPanel.SetDock(appCard, Dock.Bottom); sidebar.Children.Add(appCard);
 
             var navigation = new StackPanel();
-            var updatesLink = new Button { Content = "↻   Обновления", HorizontalContentAlignment = HorizontalAlignment.Left, Background = Paint("#123B50"), BorderBrush = Paint("#20617B"), Margin = new Thickness(0, 12, 0, 8) };
-            var allLink = new Button { Content = "▤   Все программы", HorizontalContentAlignment = HorizontalAlignment.Left, Background = Brushes.Transparent, BorderBrush = Brushes.Transparent };
-            var historyLink = new Button { Content = "◷   История", HorizontalContentAlignment = HorizontalAlignment.Left, Background = Brushes.Transparent, BorderBrush = Brushes.Transparent, Margin = new Thickness(0, 8, 0, 0) };
-            var systemLink = new Button { Content = "▣   Windows и NVIDIA", HorizontalContentAlignment = HorizontalAlignment.Left, Background = Brushes.Transparent, BorderBrush = Brushes.Transparent, Margin = new Thickness(0, 8, 0, 0) };
+            var updatesLink = NavigationButton("Обновления",
+                "M4,10 A8,8 0 0 1 18.5,7.5 L20,9 M20,4 V9 H15 M20,14 A8,8 0 0 1 5.5,16.5 L4,15 M4,20 V15 H9");
+            var allLink = NavigationButton("Все программы",
+                "M5,4 H9 A1,1 0 0 1 10,5 V9 A1,1 0 0 1 9,10 H5 A1,1 0 0 1 4,9 V5 A1,1 0 0 1 5,4 Z " +
+                "M15,4 H19 A1,1 0 0 1 20,5 V9 A1,1 0 0 1 19,10 H15 A1,1 0 0 1 14,9 V5 A1,1 0 0 1 15,4 Z " +
+                "M5,14 H9 A1,1 0 0 1 10,15 V19 A1,1 0 0 1 9,20 H5 A1,1 0 0 1 4,19 V15 A1,1 0 0 1 5,14 Z " +
+                "M15,14 H19 A1,1 0 0 1 20,15 V19 A1,1 0 0 1 19,20 H15 A1,1 0 0 1 14,19 V15 A1,1 0 0 1 15,14 Z");
+            var historyLink = NavigationButton("История",
+                "M8,4 H16 A2,2 0 0 1 18,6 V18 A2,2 0 0 1 16,20 H8 A2,2 0 0 1 6,18 V6 A2,2 0 0 1 8,4 Z M9.5,8 H14.5 M9.5,12 H14.5 M9.5,16 H13");
+            var systemLink = NavigationButton("Windows и NVIDIA",
+                "M5,4.5 H19 A2,2 0 0 1 21,6.5 V14.5 A2,2 0 0 1 19,16.5 H5 A2,2 0 0 1 3,14.5 V6.5 A2,2 0 0 1 5,4.5 Z M12,16.5 V20 M8,20 H16");
             var main = new DockPanel { Margin = new Thickness(28, 26, 28, 22) };
             Grid.SetColumn(main, 1); shell.Children.Add(main);
             BuildHistoryPage();
@@ -134,6 +169,7 @@ namespace UpdateHub
                 button.Background = selected ? Paint("#123B50") : Brushes.Transparent;
                 button.BorderBrush = selected ? Paint("#20617B") : Brushes.Transparent;
                 button.Foreground = selected ? Paint("#89E9FC") : Paint("#B5C2D6");
+                System.Windows.Automation.AutomationProperties.SetItemStatus(button, selected ? "Выбран раздел" : "");
             };
             Action refreshNavigation = () => {
                 bool filtered = onlyUpdates.IsChecked == true;
