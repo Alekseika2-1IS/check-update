@@ -48,6 +48,17 @@ namespace UpdateHub
         private static Brush Paint(string hex) { return new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)); }
         [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
 
+        private static void UseDarkTitleBar(Window window)
+        {
+            try
+            {
+                int dark = 1;
+                DwmSetWindowAttribute(new WindowInteropHelper(window).Handle, 20, ref dark, 4);
+            }
+            catch (DllNotFoundException) { }
+            catch (EntryPointNotFoundException) { }
+        }
+
         private static Border Card(UIElement child, string color, Thickness padding)
         {
             return new Border { Child = child, Background = Paint(color), BorderBrush = Paint("#29354A"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Padding = padding };
@@ -145,7 +156,7 @@ namespace UpdateHub
                 Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Load(stream));
             Background = Paint("#0E1420"); Foreground = Paint("#EDF4FC");
             FontFamily = new FontFamily("Segoe UI"); FontSize = 13;
-            SourceInitialized += (s, e) => { try { int dark = 1; DwmSetWindowAttribute(new WindowInteropHelper(this).Handle, 20, ref dark, 4); } catch (DllNotFoundException) { } catch (EntryPointNotFoundException) { } };
+            SourceInitialized += (s, e) => UseDarkTitleBar(this);
 
             var shell = new Grid { Background = Background }; shell.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(218) }); shell.ColumnDefinitions.Add(new ColumnDefinition()); Content = shell;
             var sidebar = new DockPanel { Margin = new Thickness(20, 26, 20, 22) };

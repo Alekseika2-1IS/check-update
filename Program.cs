@@ -16,7 +16,7 @@ using System.Windows.Media.Imaging;
 
 [assembly: System.Reflection.AssemblyTitle("Check Update")]
 [assembly: System.Reflection.AssemblyProduct("Check Update")]
-[assembly: System.Reflection.AssemblyVersion("0.10.0.0")]
+[assembly: System.Reflection.AssemblyVersion("0.10.1.0")]
 
 namespace UpdateHub
 {
@@ -303,7 +303,7 @@ namespace UpdateHub
             }
             catch (Exception ex) { Log("Скачивание приложения: " + ex); appVersionStatus.Text = "Скачать не удалось — повторите позже"; ShowError(ex.Message); }
             finally { downloadingApp = false; SetBusy(false); }
-            if (downloadedApp != null && MessageBox.Show(this, "Обновление скачано и проверено. Перезапустить Check Update и применить его?", "Обновление Check Update", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            if (downloadedApp != null && BuildRestartConfirmation(SelfUpdate.ParseVersion(availableRelease.Tag)).ShowDialog() == true)
             {
                 try { SelfUpdate.ScheduleInstall(downloadedApp); Application.Current.Shutdown(); }
                 catch (Exception ex) { Log(ex.ToString()); ShowError("Не удалось запустить обновление. " + ex.Message); }
@@ -426,8 +426,7 @@ namespace UpdateHub
 
         private async Task InstallUpdatesAsync(List<Package> chosen, bool continueSession = false)
         {
-            string list = String.Join("\n", chosen.Select(p => "• " + p.Name + " → " + p.Available));
-            if (MessageBox.Show(this, "Обновить выбранные программы?\n\n" + list + "\n\nСохраните работу в этих программах. Продолжая, вы принимаете лицензионные условия выбранных обновлений. Установщики могут запросить права администратора.", "Подтверждение обновлений", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+            if (BuildProgramConfirmation(chosen).ShowDialog() != true) return;
             if (!continueSession) maintenanceAttempts.Clear();
             maintenanceQueueSize = chosen.Count;
             installing = true; SetBusy(true); int succeeded = 0; int failed = 0;

@@ -11,6 +11,7 @@ foreach ($reference in $references) { $compilerArguments += '/reference:' + (Joi
 $compilerArguments += Join-Path $PSScriptRoot 'Program.cs'
 $compilerArguments += Join-Path $PSScriptRoot 'SelfUpdate.cs'
 $compilerArguments += Join-Path $PSScriptRoot 'Design.cs'
+$compilerArguments += Join-Path $PSScriptRoot 'Confirmation.cs'
 $compilerArguments += Join-Path $PSScriptRoot 'Maintenance.cs'
 $compilerArguments += Join-Path $PSScriptRoot 'History.cs'
 $compilerArguments += Join-Path $PSScriptRoot 'SystemUpdates.cs'

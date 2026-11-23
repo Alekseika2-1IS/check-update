@@ -14,7 +14,7 @@ public static class Tests
     static int checks;
     static void Check(bool condition, string label) { if (!condition) throw new Exception(label); checks++; Console.WriteLine("PASS " + label); }
     static string Row(string name, string id, string version, string available) { return name.PadRight(25) + id.PadRight(30) + version.PadRight(18) + available; }
-    static void Capture(MainWindow window, string name)
+    static void Capture(Window window, string name)
     {
         window.UpdateLayout();
         window.Dispatcher.Invoke(DispatcherPriority.ContextIdle, new Action(() => { }));
@@ -228,8 +228,75 @@ public static class Tests
         }
         if (target.CanUpdate) CheckMaintenanceCard(window, target);
         CheckSidebarNavigation(window);
+        CheckConfirmations(window);
         window.Close(); app.Shutdown();
         Console.WriteLine("All " + checks + " checks passed. No updates installed.");
+    }
+
+    private static void CheckConfirmations(MainWindow owner)
+    {
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var queue = Enumerable.Range(1, 28).Select(i => new Package
+        {
+            Name = i == 2 ? "Microsoft Visual C++ 2015–2022 Redistributable (x64) — компонент с длинным названием" : "Программа " + i,
+            Installed = "1.2." + i,
+            Available = "1.3." + i
+        }).ToList();
+        queue[0].Name = "Пример обновления программы";
+        var programs = (Window)typeof(MainWindow).GetMethod("BuildProgramConfirmation", flags).Invoke(owner, new object[] { queue });
+        Check(!ExerciseConfirmation(programs, false, (body, actions) =>
+        {
+            var list = (System.Windows.Controls.DataGrid)((System.Windows.Controls.Border)body.Children[2]).Child;
+            Check(list.Items.Count == queue.Count && list.Columns.Count == 3
+                && ((System.Windows.Controls.TextBlock)body.Children[1]).Text.Contains(queue.Count.ToString()),
+                "program confirmation displays the complete queue and version columns");
+            Check(((System.Windows.Controls.Button)actions.Children[1]).Content.Equals("Обновить")
+                && actions.IsVisible && actions.TranslatePoint(new Point(0, actions.ActualHeight), body).Y <= body.ActualHeight,
+                "program confirmation actions fit beneath the scrollable list");
+            Capture(programs, "preview-confirm-programs.png");
+            list.ScrollIntoView(queue.Last());
+            programs.Dispatcher.Invoke(DispatcherPriority.ContextIdle, new Action(() => { }));
+            Check(list.ItemContainerGenerator.ContainerFromItem(queue.Last()) is System.Windows.Controls.DataGridRow
+                && actions.IsVisible, "long program queue scrolls to the last entry with actions still visible");
+        }), "program confirmation cancels without accepting the queue");
+
+        var restart = (Window)typeof(MainWindow).GetMethod("BuildRestartConfirmation", flags).Invoke(owner, new object[] { new Version(0, 10, 2, 0) });
+        Check(ExerciseConfirmation(restart, true, (body, actions) =>
+        {
+            var versions = (System.Windows.Controls.Grid)((System.Windows.Controls.Border)body.Children[2]).Child;
+            var current = (System.Windows.Controls.TextBlock)((System.Windows.Controls.StackPanel)versions.Children[0]).Children[1];
+            var next = (System.Windows.Controls.TextBlock)((System.Windows.Controls.StackPanel)versions.Children[1]).Children[1];
+            Check(current.Text == SelfUpdate.CurrentVersion.ToString(3) && next.Text == "0.10.2", "restart confirmation compares installed and downloaded versions");
+            Capture(restart, "preview-confirm-restart.png");
+        }), "restart confirmation accepts an explicit button click");
+    }
+
+    private static bool ExerciseConfirmation(Window dialog, bool confirm, Action<System.Windows.Controls.StackPanel, System.Windows.Controls.StackPanel> inspect)
+    {
+        Exception failure = null;
+        dialog.WindowStartupLocation = WindowStartupLocation.Manual;
+        dialog.Left = -10000;
+        dialog.Top = -10000;
+        dialog.ShowActivated = false;
+        dialog.Loaded += (sender, args) => dialog.Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
+        {
+            try
+            {
+                var body = (System.Windows.Controls.StackPanel)((System.Windows.Controls.Border)dialog.Content).Child;
+                var actions = (System.Windows.Controls.StackPanel)body.Children[4];
+                inspect(body, actions);
+                var button = (System.Windows.Controls.Button)actions.Children[confirm ? 1 : 0];
+                button.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+                dialog.DialogResult = false;
+            }
+        }));
+        bool result = dialog.ShowDialog() == true;
+        if (failure != null) throw new InvalidOperationException("Confirmation window check failed.", failure);
+        return result;
     }
 
     private static void CheckMaintenanceCard(MainWindow window, Package target)
