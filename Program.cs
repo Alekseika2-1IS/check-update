@@ -16,7 +16,7 @@ using System.Windows.Media.Imaging;
 
 [assembly: System.Reflection.AssemblyTitle("Check Update")]
 [assembly: System.Reflection.AssemblyProduct("Check Update")]
-[assembly: System.Reflection.AssemblyVersion("0.10.1.0")]
+[assembly: System.Reflection.AssemblyVersion("0.10.2.0")]
 
 namespace UpdateHub
 {
@@ -124,9 +124,14 @@ namespace UpdateHub
             }
         }
 
+        internal static string StripTerminalFormatting(string output)
+        {
+            return Regex.Replace(output, @"\x1B\[[0-?]*[ -/]*[@-~]", "");
+        }
+
         public static List<Package> Parse(string output)
         {
-            var clean = Regex.Replace(output, @"\x1B\[[0-?]*[ -/]*[@-~]", "");
+            var clean = StripTerminalFormatting(output);
             var lines = clean.Replace("\r\n", "\n").Split('\n');
             int separator = Array.FindIndex(lines, l => Regex.IsMatch(l.Trim(), @"^-{10,}$"));
             if (separator < 1) throw new FormatException("Не удалось прочитать список программ. Подробности сохранены в журнале.");
@@ -265,9 +270,14 @@ namespace UpdateHub
             progress.Value = completed; progress.IsIndeterminate = indeterminate;
         }
 
-        private void Log(string text)
+        private void Log(string text, bool error = false)
         {
-            try { Directory.CreateDirectory(Path.GetDirectoryName(logFile)); File.AppendAllText(logFile, DateTime.Now.ToString("u") + " " + text + Environment.NewLine, Encoding.UTF8); } catch { }
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(logFile));
+                File.AppendAllText(logFile, DateTime.Now.ToString("u") + " " + (error ? "[Ошибка] " : "") + text + Environment.NewLine, Encoding.UTF8);
+            }
+            catch { }
         }
 
         private void ShowError(string message) { MessageBox.Show(this, message, "Check Update", MessageBoxButton.OK, MessageBoxImage.Information); }
@@ -283,10 +293,10 @@ namespace UpdateHub
             }
             catch (GitHubRateLimitException ex)
             {
-                Log("Проверка версии приложения: " + ex.Message);
+                Log("Проверка версии приложения: " + ex.Message, true);
                 appVersionStatus.Text = "GitHub временно ограничил запросы. Проверьте позже.";
             }
-            catch (Exception ex) { Log("Проверка версии приложения: " + ex); appVersionStatus.Text = "GitHub недоступен — можно проверить позже"; }
+            catch (Exception ex) { Log("Проверка версии приложения: " + ex, true); appVersionStatus.Text = "GitHub недоступен — можно проверить позже"; }
             finally { checkingVersion = false; appUpdate.IsEnabled = !busy && !downloadingApp; }
         }
 
@@ -301,19 +311,19 @@ namespace UpdateHub
                 appVersionStatus.Text = "Обновление скачано и проверено"; appUpdate.FontSize = 12;
                 SetButtonLabel(appUpdate, "Перезапустить");
             }
-            catch (Exception ex) { Log("Скачивание приложения: " + ex); appVersionStatus.Text = "Скачать не удалось — повторите позже"; ShowError(ex.Message); }
+            catch (Exception ex) { Log("Скачивание приложения: " + ex, true); appVersionStatus.Text = "Скачать не удалось — повторите позже"; ShowError(ex.Message); }
             finally { downloadingApp = false; SetBusy(false); }
             if (downloadedApp != null && BuildRestartConfirmation(SelfUpdate.ParseVersion(availableRelease.Tag)).ShowDialog() == true)
             {
                 try { SelfUpdate.ScheduleInstall(downloadedApp); Application.Current.Shutdown(); }
-                catch (Exception ex) { Log(ex.ToString()); ShowError("Не удалось запустить обновление. " + ex.Message); }
+                catch (Exception ex) { Log(ex.ToString(), true); ShowError("Не удалось запустить обновление. " + ex.Message); }
             }
         }
 
         private async Task<List<Package>> LoadPackagesAsync()
         {
             var result = await Task.Run(() => Winget.Run("list --source winget --disable-interactivity", 120000));
-            Log("Проверка: " + result.Code + "\n" + result.Output + "\n" + result.Error);
+            Log("Проверка: " + result.Code + "\n" + result.Output + "\n" + result.Error, result.Code != 0);
             if (result.Code != 0) throw new InvalidOperationException("Windows не смогла проверить программы. Проверьте интернет и доступность WinGet. Подробности — в журнале.");
             return await Task.Run(() =>
             {
@@ -382,7 +392,7 @@ namespace UpdateHub
             }
             catch (Exception ex)
             {
-                Log("Повторная проверка: " + ex);
+                Log("Повторная проверка: " + ex, true);
                 status.Text = "Не удалось сверить версии. Попробуйте ещё раз. Подробности в журнале.";
                 ShowProgress("Проверка не завершена", 0, 1, false);
                 current = null;
@@ -410,8 +420,8 @@ namespace UpdateHub
                 ShowProgress("Проверка завершена", 1, 1, false);
                 status.Text = "Показаны программы, распознанные Windows.";
             }
-            catch (Win32Exception) { programScanFailed = true; progressText.Text = "Проверка не завершена"; status.Text = "WinGet не найден. Установите или обновите «Установщик приложений» в Microsoft Store."; }
-            catch (Exception ex) { programScanFailed = true; progressText.Text = "Проверка не завершена"; Log(ex.ToString()); status.Text = ex.Message; }
+            catch (Win32Exception ex) { programScanFailed = true; progressText.Text = "Проверка не завершена"; status.Text = "WinGet не найден. Установите или обновите «Установщик приложений» в Microsoft Store."; Log(ex.ToString(), true); }
+            catch (Exception ex) { programScanFailed = true; progressText.Text = "Проверка не завершена"; Log(ex.ToString(), true); status.Text = ex.Message; }
             finally { scanningPrograms = false; SetBusy(false); }
             await systemScan;
         }
@@ -445,8 +455,8 @@ namespace UpdateHub
                     try
                     {
                         var result = await Task.Run(() => Winget.Run("upgrade --id " + Winget.Quote(p.Id) + " --exact --source winget --interactive --accept-package-agreements --disable-interactivity", -1));
-                        Log("Обновление " + p.Id + ": " + result.Code + "\n" + result.Output + "\n" + result.Error);
                         bool ok = Winget.UpgradeNeedsVerification(result.Code);
+                        Log("Обновление " + p.Id + ": " + result.Code + "\n" + result.Output + "\n" + result.Error, !ok);
                         if (ok)
                         {
                             succeeded++; successfulIds.Add(p.Id);
@@ -463,7 +473,7 @@ namespace UpdateHub
                     {
                         failed++;
                         history.Detail = "Не удалось запустить или дождаться WinGet. Подробности в журнале.";
-                        Log(ex.ToString());
+                        Log(ex.ToString(), true);
                     }
                     p.LastAttempt = history;
                     p.Status = history.Result;
@@ -497,7 +507,7 @@ namespace UpdateHub
                     attempts.Count(entry => entry.Installed != null), failed, attempts.Count(entry => entry.CanRecheck));
                 if (verification.Error != null)
                 {
-                    Log("Автоматическая проверка: " + verification.Error);
+                    Log("Автоматическая проверка: " + verification.Error, true);
                     status.Text = outcome + "Не удалось подтвердить итоговые версии. " + (verification.Packages == null ? "Список сохранён прежним. " : "Показана последняя успешная проверка. ") + "Повторите проверку позднее.";
                 }
                 else status.Text = outcome + "Список обновлён автоматически." + (verification.Pending > 0 ? " Неподтверждённые версии можно сверить повторно в списке или в истории." : "");

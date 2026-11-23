@@ -227,10 +227,78 @@ public static class Tests
             Check(!(bool)checkingSystem.GetValue(window), "system checks finish independently of the program scan");
         }
         if (target.CanUpdate) CheckMaintenanceCard(window, target);
+        CheckJournal(window);
         CheckSidebarNavigation(window);
         CheckConfirmations(window);
         window.Close(); app.Shutdown();
         Console.WriteLine("All " + checks + " checks passed. No updates installed.");
+    }
+
+    private static void CheckJournal(MainWindow window)
+    {
+        var file = Path.Combine(Path.GetTempPath(), "CheckUpdate-journal-" + Guid.NewGuid().ToString("N") + ".log");
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var pathField = typeof(MainWindow).GetField("logFile", flags);
+        var logPath = pathField.GetValue(window);
+        string fixture = "2026-11-24 10:15:10Z Проверка: 0\r\nКаталог успешно прочитан.\r\n" +
+            "2026-11-24 10:15:22Z Обновление Example.App: 1603\r\n\u001b[31mУстановщик вернул ошибку.\u001b[0m\r\nСохраните работу и закройте программу.\r\n" +
+            "2026-11-24 10:16:12Z [Ошибка] Проверка Windows Update: нет подключения.\r\n";
+        try
+        {
+            Check(JournalSnapshot.Read(file).Entries.Count == 0, "missing activity log is an empty journal");
+            File.WriteAllText(file, fixture);
+            var snapshot = JournalSnapshot.Read(file);
+            Check(snapshot.Entries.Count == 3 && !snapshot.Entries[0].IsError && snapshot.Entries.Skip(1).All(entry => entry.IsError)
+                && snapshot.Entries[1].Message.Contains("Сохраните работу") && !snapshot.Entries[1].Message.Contains("\u001b"),
+                "journal keeps multiline details and detects legacy and marked errors");
+            Check(!new JournalEntry(null, "Обновление Example.App: -1978334967").IsError,
+                "journal does not flag a successful installation that requires a restart");
+            File.WriteAllText(file, new string('я', 150000) + "\r\n" + fixture);
+            snapshot = JournalSnapshot.Read(file);
+            Check(snapshot.Truncated && snapshot.Entries.Count == 3 && snapshot.Entries[0].Timestamp != null,
+                "large logs show recent complete entries");
+            File.WriteAllText(file, fixture);
+            pathField.SetValue(window, file);
+
+            var shell = (System.Windows.Controls.Grid)window.Content;
+            var sidebar = (System.Windows.Controls.DockPanel)((System.Windows.Controls.Border)shell.Children[0]).Child;
+            var links = ((System.Windows.Controls.StackPanel)sidebar.Children[2]).Children.OfType<System.Windows.Controls.Button>().ToArray();
+            links.Last().RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            var reading = typeof(MainWindow).GetField("readingJournal", flags);
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while ((bool)reading.GetValue(window) && DateTime.UtcNow < deadline) WaitForAnimation(30);
+            Check(!(bool)reading.GetValue(window) && shell.Children[4].IsVisible
+                && System.Windows.Automation.AutomationProperties.GetItemStatus(links.Last()) == "Выбран раздел",
+                "journal opens and finishes loading inside the main window");
+            var editor = (System.Windows.Controls.RichTextBox)typeof(MainWindow).GetField("journalText", flags).GetValue(window);
+            var errorHeading = (System.Windows.Documents.Run)((System.Windows.Documents.Paragraph)editor.Document.Blocks.LastBlock).Inlines.FirstInline;
+            Check(editor.Document.Blocks.Count == 3 && errorHeading.Foreground.ToString() == "#FFFFBF77",
+                "journal highlights errors in the log viewer");
+            Capture(window, "preview-journal.png");
+            var errors = (System.Windows.Controls.CheckBox)typeof(MainWindow).GetField("journalErrorsOnly", flags).GetValue(window);
+            errors.IsChecked = true;
+            errors.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            Check(editor.Document.Blocks.Count == 2, "journal errors-only filter excludes successful records");
+            var search = (System.Windows.Controls.TextBox)typeof(MainWindow).GetField("journalSearch", flags).GetValue(window);
+            search.Text = "сохраните работу";
+            Check(editor.Document.Blocks.Count == 1, "journal search matches multiline content while keeping the error filter");
+            search.Clear();
+            errors.IsChecked = false;
+            errors.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            File.AppendAllText(file, "2026-11-24 10:17:10Z Проверка: 0\r\n");
+            var refresh = (System.Windows.Controls.Button)typeof(MainWindow).GetField("journalRefresh", flags).GetValue(window);
+            refresh.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            deadline = DateTime.UtcNow.AddSeconds(5);
+            while ((bool)reading.GetValue(window) && DateTime.UtcNow < deadline) WaitForAnimation(30);
+            Check(editor.Document.Blocks.Count == 4, "journal refresh loads newly appended records");
+            links[0].RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            Check(!shell.Children[4].IsVisible, "leaving the journal restores the programs page");
+        }
+        finally
+        {
+            pathField.SetValue(window, logPath);
+            File.Delete(file);
+        }
     }
 
     private static void CheckConfirmations(MainWindow owner)
@@ -405,17 +473,17 @@ public static class Tests
         var list = (System.Windows.Controls.StackPanel)sidebar.Children[2];
         var links = list.Children.OfType<System.Windows.Controls.Button>().ToArray();
         var pages = new[] { shell.Children[1], shell.Children[1], shell.Children[2], shell.Children[3] };
-        string[] names = { "Обновления", "Все программы", "История", "Windows и NVIDIA" };
+        string[] names = { "Обновления", "Все программы", "История", "Windows и NVIDIA", "Журнал" };
         Check(links.Select(System.Windows.Automation.AutomationProperties.GetName).SequenceEqual(names),
             "sidebar buttons expose their labels to accessibility tools");
-        for (int i = 0; i < links.Length; i++)
+        for (int i = 0; i < pages.Length; i++)
         {
             links[i].RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
             Check(pages[i].IsVisible &&
                 links.Where(link => System.Windows.Automation.AutomationProperties.GetItemStatus(link) == "Выбран раздел").SequenceEqual(new[] { links[i] }),
                 "sidebar opens and highlights " + names[i]);
+            if (names[i] == "Windows и NVIDIA") Capture(window, "preview-system.png");
         }
-        Capture(window, "preview-system.png");
     }
 
     private static void CheckRateLimitResponse()

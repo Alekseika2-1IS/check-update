@@ -195,12 +195,16 @@ namespace UpdateHub
                 "M8,4 H16 A2,2 0 0 1 18,6 V18 A2,2 0 0 1 16,20 H8 A2,2 0 0 1 6,18 V6 A2,2 0 0 1 8,4 Z M9.5,8 H14.5 M9.5,12 H14.5 M9.5,16 H13");
             var systemLink = NavigationButton("Windows и NVIDIA",
                 "M5,4.5 H19 A2,2 0 0 1 21,6.5 V14.5 A2,2 0 0 1 19,16.5 H5 A2,2 0 0 1 3,14.5 V6.5 A2,2 0 0 1 5,4.5 Z M12,16.5 V20 M8,20 H16");
+            var journalLink = NavigationButton("Журнал",
+                "M5,5 H19 A2,2 0 0 1 21,7 V17 A2,2 0 0 1 19,19 H5 A2,2 0 0 1 3,17 V7 A2,2 0 0 1 5,5 Z M7,9 L10,12 L7,15 M13,15 H17");
             var main = new DockPanel { Margin = new Thickness(28, 26, 28, 22) };
             Grid.SetColumn(main, 1); shell.Children.Add(main);
             BuildHistoryPage();
             Grid.SetColumn(historyPage, 1); shell.Children.Add(historyPage);
             BuildSystemPage();
             Grid.SetColumn(systemPage, 1); shell.Children.Add(systemPage);
+            BuildJournalPage();
+            Grid.SetColumn(journalPage, 1); shell.Children.Add(journalPage);
             var maintenanceCard = BuildMaintenanceCard();
             Action<Button, bool> highlight = (button, selected) =>
             {
@@ -212,38 +216,39 @@ namespace UpdateHub
             Action refreshNavigation = () => {
                 bool filtered = onlyUpdates.IsChecked == true;
                 maintenanceCard.Visibility = filtered ? Visibility.Visible : Visibility.Collapsed;
-                bool showingHistory = historyPage.Visibility == Visibility.Visible;
                 highlight(updatesLink, main.Visibility == Visibility.Visible && filtered);
                 highlight(allLink, main.Visibility == Visibility.Visible && !filtered);
-                highlight(historyLink, showingHistory);
+                highlight(historyLink, historyPage.Visibility == Visibility.Visible);
                 highlight(systemLink, systemPage.Visibility == Visibility.Visible);
+                highlight(journalLink, journalPage.Visibility == Visibility.Visible);
+            };
+            var pages = new[] { main, historyPage, systemPage, journalPage };
+            Action<DockPanel> showPage = selected =>
+            {
+                foreach (var page in pages) page.Visibility = page == selected ? Visibility.Visible : Visibility.Collapsed;
+                refreshNavigation();
             };
             Action<bool> showPrograms = filtered =>
             {
-                historyPage.Visibility = Visibility.Collapsed;
-                systemPage.Visibility = Visibility.Collapsed;
-                main.Visibility = Visibility.Visible;
                 onlyUpdates.IsChecked = filtered;
-                RefreshView(); refreshNavigation();
+                showPage(main); RefreshView();
             };
             updatesLink.Click += (s, e) => showPrograms(true);
             allLink.Click += (s, e) => showPrograms(false);
             historyLink.Click += (s, e) =>
             {
-                main.Visibility = Visibility.Collapsed;
-                systemPage.Visibility = Visibility.Collapsed;
-                historyPage.Visibility = Visibility.Visible;
-                RefreshHistory(); refreshNavigation();
+                showPage(historyPage);
+                RefreshHistory();
             };
-            systemLink.Click += (s, e) =>
+            systemLink.Click += (s, e) => showPage(systemPage);
+            Func<System.Threading.Tasks.Task> showJournal = async () =>
             {
-                main.Visibility = Visibility.Collapsed;
-                historyPage.Visibility = Visibility.Collapsed;
-                systemPage.Visibility = Visibility.Visible;
-                refreshNavigation();
+                showPage(journalPage);
+                await RefreshJournalAsync();
             };
+            journalLink.Click += async (s, e) => await showJournal();
             navigation.Children.Add(updatesLink); navigation.Children.Add(allLink); navigation.Children.Add(historyLink);
-            navigation.Children.Add(systemLink);
+            navigation.Children.Add(systemLink); navigation.Children.Add(journalLink);
             var settingsLabel = Label("НАСТРОЙКИ", 10, "#758EAE");
             settingsLabel.Margin = new Thickness(0, 24, 0, 10);
             navigation.Children.Add(settingsLabel);
@@ -313,7 +318,7 @@ namespace UpdateHub
 
             var footer = new DockPanel { Margin = new Thickness(0, 16, 0, 0) };
             var logButton = new Button { Content = "Журнал", Padding = new Thickness(12, 8, 12, 8), VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(18, 0, 0, 0), FontSize = 12 };
-            logButton.Click += (s, e) => { try { Log("Журнал открыт"); System.Diagnostics.Process.Start("notepad.exe", "\"" + logFile + "\""); } catch (Exception ex) { ShowError(ex.Message); } };
+            logButton.Click += async (s, e) => await showJournal();
             DockPanel.SetDock(logButton, Dock.Right); footer.Children.Add(logButton);
             var activity = new StackPanel();
             rowRecovery.HorizontalAlignment = HorizontalAlignment.Left;
