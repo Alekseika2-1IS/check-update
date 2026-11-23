@@ -64,9 +64,44 @@ namespace UpdateHub
             return new Border { Child = child, Background = Paint(color), BorderBrush = Paint("#29354A"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Padding = padding };
         }
 
+        private static Border RoundedContentCard(UIElement child)
+        {
+            var card = Card(child, "#151E2E", new Thickness(1));
+            card.SizeChanged += (s, e) =>
+            {
+                double radius = card.CornerRadius.TopLeft;
+                var clip = new RectangleGeometry(new Rect(e.NewSize), radius, radius);
+                clip.Freeze();
+                card.Clip = clip;
+            };
+            return card;
+        }
+
         private static TextBlock Label(string text, double size, string color)
         {
             return new TextBlock { Text = text, FontSize = size, Foreground = Paint(color), TextWrapping = TextWrapping.Wrap };
+        }
+
+        private static Grid BuildSearchField(TextBox input, string label)
+        {
+            input.Padding = new Thickness(5, 10, 9, 10);
+            System.Windows.Automation.AutomationProperties.SetName(input, label);
+            var host = new Grid();
+            host.Children.Add(input);
+            var hint = Label(label + "…", 13, "#8299B5");
+            hint.Margin = new Thickness(8, 0, 0, 0);
+            hint.VerticalAlignment = VerticalAlignment.Center;
+            hint.IsHitTestVisible = false;
+            var style = new Style(typeof(TextBlock));
+            style.Setters.Add(new Setter(VisibilityProperty, Visibility.Collapsed));
+            var showHint = new MultiDataTrigger();
+            showHint.Conditions.Add(new Condition(new Binding("Text") { Source = input }, ""));
+            showHint.Conditions.Add(new Condition(new Binding("IsFocused") { Source = input }, false));
+            showHint.Setters.Add(new Setter(VisibilityProperty, Visibility.Visible));
+            style.Triggers.Add(showHint);
+            hint.Style = style;
+            host.Children.Add(hint);
+            return host;
         }
 
         private const string RefreshIcon = "M4,10 A8,8 0 0 1 18.5,7.5 L20,9 M20,4 V9 H15 M20,14 A8,8 0 0 1 5.5,16.5 L4,15 M4,20 V15 H9";
@@ -289,13 +324,9 @@ namespace UpdateHub
             update.Click += async (s, e) => await UpdateAsync(); DockPanel.SetDock(update, Dock.Right); searchRow.Children.Add(update);
             var clearSearch = new Button { Content = "×", FontSize = 19, Padding = new Thickness(12, 5, 12, 5), Margin = new Thickness(7, 0, 0, 0), ToolTip = "Очистить поиск" };
             clearSearch.Click += (s, e) => { search.Clear(); search.Focus(); }; DockPanel.SetDock(clearSearch, Dock.Right); searchRow.Children.Add(clearSearch);
-            var searchHost = new Grid();
             search.ToolTip = "Поиск по названию программы или идентификатору";
-            System.Windows.Automation.AutomationProperties.SetName(search, "Поиск программы");
-            search.TextChanged += (s, e) => RefreshView(); searchHost.Children.Add(search);
-            var placeholder = Label("Поиск программы…", 13, "#8299B5"); placeholder.Margin = new Thickness(13, 0, 0, 0); placeholder.VerticalAlignment = VerticalAlignment.Center; placeholder.IsHitTestVisible = false;
-            search.TextChanged += (s, e) => placeholder.Visibility = String.IsNullOrEmpty(search.Text) ? Visibility.Visible : Visibility.Collapsed;
-            searchHost.Children.Add(placeholder); searchRow.Children.Add(searchHost); actions.Children.Add(searchRow);
+            search.TextChanged += (s, e) => RefreshView();
+            searchRow.Children.Add(BuildSearchField(search, "Поиск программы")); actions.Children.Add(searchRow);
             var filters = new DockPanel { Margin = new Thickness(0, 15, 0, 0) };
             summary.Foreground = Paint("#8299B5"); summary.FontSize = 11; summary.VerticalAlignment = VerticalAlignment.Center; summary.Text = "Список ещё не загружен";
             DockPanel.SetDock(summary, Dock.Right); filters.Children.Add(summary);
@@ -392,7 +423,7 @@ namespace UpdateHub
             emptyTitle.Text = "Начнём с проверки"; emptyTitle.FontSize = 20; emptyTitle.FontWeight = FontWeights.SemiBold; emptyTitle.TextAlignment = TextAlignment.Center; emptyState.Children.Add(emptyTitle);
             emptyDescription.Text = "Нажмите «Проверить обновления».\nМы найдём доступные версии ваших программ."; emptyDescription.Foreground = Paint("#92A7C2"); emptyDescription.TextAlignment = TextAlignment.Center; emptyDescription.TextWrapping = TextWrapping.Wrap; emptyDescription.Margin = new Thickness(0, 9, 0, 0); emptyState.Children.Add(emptyDescription);
             list.Children.Add(emptyState);
-            var listCard = Card(list, "#151E2E", new Thickness(1)); listCard.ClipToBounds = true; main.Children.Add(listCard);
+            main.Children.Add(RoundedContentCard(list));
             CollectionViewSource.GetDefaultView(packages).Filter = o => MatchesFilter((Package)o);
             refreshNavigation();
         }
@@ -544,7 +575,7 @@ namespace UpdateHub
                     MinWidth = widths[i], Width = new DataGridLength(widths[i], DataGridLengthUnitType.Star)
                 });
             }
-            historyPage.Children.Add(Card(historyTable, "#151E2E", new Thickness(1)));
+            historyPage.Children.Add(RoundedContentCard(historyTable));
         }
 
         private void RefreshRecoveryButtons()

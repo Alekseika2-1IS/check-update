@@ -128,15 +128,7 @@ namespace UpdateHub
                 DockPanel.SetDock(action, Dock.Right);
                 toolbar.Children.Add(action);
             }
-            System.Windows.Automation.AutomationProperties.SetName(journalSearch, "Поиск по журналу");
-            var searchHost = new Grid();
-            searchHost.Children.Add(journalSearch);
-            var placeholder = Label("Поиск по журналу…", 13, "#8299B5");
-            placeholder.Margin = new Thickness(13, 0, 0, 0);
-            placeholder.VerticalAlignment = VerticalAlignment.Center;
-            placeholder.IsHitTestVisible = false;
-            searchHost.Children.Add(placeholder);
-            toolbar.Children.Add(searchHost);
+            toolbar.Children.Add(BuildSearchField(journalSearch, "Поиск по журналу"));
             DockPanel.SetDock(toolbar, Dock.Top);
             journalPage.Children.Add(toolbar);
 
@@ -154,15 +146,9 @@ namespace UpdateHub
             journalText.FontSize = 12;
             journalText.Padding = new Thickness(14, 10, 9, 10);
             System.Windows.Automation.AutomationProperties.SetName(journalText, "Записи журнала");
-            var surface = Card(journalText, "#151E2E", new Thickness(1));
-            surface.ClipToBounds = true;
-            journalPage.Children.Add(surface);
+            journalPage.Children.Add(RoundedContentCard(journalText));
 
-            journalSearch.TextChanged += (s, e) =>
-            {
-                placeholder.Visibility = journalSearch.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
-                RenderJournal();
-            };
+            journalSearch.TextChanged += (s, e) => RenderJournal();
             journalErrorsOnly.Click += (s, e) => RenderJournal();
             journalRefresh.Click += async (s, e) => await RefreshJournalAsync();
             journalCopy.Click += (s, e) =>

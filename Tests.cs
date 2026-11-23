@@ -167,6 +167,7 @@ public static class Tests
         Check(((System.Collections.ICollection)field.GetValue(window)).Count > 0, offline ? "window displays offline fixture" : "startup scan fills the list without a manual check");
         var items = (System.Collections.ObjectModel.ObservableCollection<Package>)field.GetValue(window);
         var search = (System.Windows.Controls.TextBox)typeof(MainWindow).GetField("search", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
+        CheckSearchField(window, search);
         var view = System.Windows.Data.CollectionViewSource.GetDefaultView(items);
         var target = items.First();
         var onlyUpdates = (System.Windows.Controls.CheckBox)typeof(MainWindow).GetField("onlyUpdates", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
@@ -234,6 +235,30 @@ public static class Tests
         Console.WriteLine("All " + checks + " checks passed. No updates installed.");
     }
 
+    private static void CheckSearchField(MainWindow window, System.Windows.Controls.TextBox input)
+    {
+        var host = (System.Windows.Controls.Grid)input.Parent;
+        var hint = (System.Windows.Controls.TextBlock)host.Children[1];
+        var previousFocus = System.Windows.Input.FocusManager.GetFocusedElement(window);
+        System.Windows.Input.FocusManager.SetFocusedElement(window, null);
+        input.Clear();
+        window.UpdateLayout();
+        Check(hint.Visibility == Visibility.Visible, "empty search field shows its hint without focus");
+        System.Windows.Input.FocusManager.SetFocusedElement(window, input);
+        window.UpdateLayout();
+        Check(input.IsFocused && hint.Visibility == Visibility.Collapsed, "search hint hides on focus before typing");
+        input.Text = "abc";
+        window.Dispatcher.Invoke(DispatcherPriority.ContextIdle, new Action(() => { }));
+        window.UpdateLayout();
+        var caret = input.GetRectFromCharacterIndex(0);
+        Check(!caret.IsEmpty && caret.X <= 9, "search caret starts close to the left edge (" + caret + ")");
+        System.Windows.Input.FocusManager.SetFocusedElement(window, null);
+        Check(hint.Visibility == Visibility.Collapsed, "search hint stays hidden while the field has text");
+        input.Clear();
+        Check(hint.Visibility == Visibility.Visible, "search hint returns when the empty field loses focus");
+        System.Windows.Input.FocusManager.SetFocusedElement(window, previousFocus);
+    }
+
     private static void CheckJournal(MainWindow window)
     {
         var file = Path.Combine(Path.GetTempPath(), "CheckUpdate-journal-" + Guid.NewGuid().ToString("N") + ".log");
@@ -280,6 +305,7 @@ public static class Tests
             errors.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
             Check(editor.Document.Blocks.Count == 2, "journal errors-only filter excludes successful records");
             var search = (System.Windows.Controls.TextBox)typeof(MainWindow).GetField("journalSearch", flags).GetValue(window);
+            CheckSearchField(window, search);
             search.Text = "сохраните работу";
             Check(editor.Document.Blocks.Count == 1, "journal search matches multiline content while keeping the error filter");
             search.Clear();
@@ -314,13 +340,23 @@ public static class Tests
         var programs = (Window)typeof(MainWindow).GetMethod("BuildProgramConfirmation", flags).Invoke(owner, new object[] { queue });
         Check(!ExerciseConfirmation(programs, false, (body, actions) =>
         {
-            var list = (System.Windows.Controls.DataGrid)((System.Windows.Controls.Border)body.Children[2]).Child;
+            var card = (System.Windows.Controls.Border)body.Children[2];
+            var list = (System.Windows.Controls.DataGrid)card.Child;
             Check(list.Items.Count == queue.Count && list.Columns.Count == 3
                 && ((System.Windows.Controls.TextBlock)body.Children[1]).Text.Contains(queue.Count.ToString()),
                 "program confirmation displays the complete queue and version columns");
             Check(((System.Windows.Controls.Button)actions.Children[1]).Content.Equals("Обновить")
                 && actions.IsVisible && actions.TranslatePoint(new Point(0, actions.ActualHeight), body).Y <= body.ActualHeight,
                 "program confirmation actions fit beneath the scrollable list");
+            Check(card.Clip is RectangleGeometry && !card.Clip.FillContains(new Point(1, 1)) &&
+                card.Clip.FillContains(new Point(card.ActualWidth / 2, 1)),
+                "table content is clipped to the rounded frame");
+            var viewer = (System.Windows.Controls.ScrollViewer)list.Template.FindName("DG_ScrollViewer", list);
+            var bar = (System.Windows.Controls.Primitives.ScrollBar)viewer.Template.FindName("PART_VerticalScrollBar", viewer);
+            var headers = (FrameworkElement)viewer.Template.FindName("PART_ColumnHeadersPresenter", viewer);
+            Check(bar.IsVisible && bar.TranslatePoint(new Point(), viewer).Y < headers.ActualHeight / 2 &&
+                bar.ActualHeight > viewer.ActualHeight - 10,
+                "the table scroll track spans the header and row viewport");
             Capture(programs, "preview-confirm-programs.png");
             list.ScrollIntoView(queue.Last());
             programs.Dispatcher.Invoke(DispatcherPriority.ContextIdle, new Action(() => { }));

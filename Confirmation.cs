@@ -38,10 +38,8 @@ namespace UpdateHub
             list.Columns.Add(ConfirmationColumn("ПРОГРАММА", "Name", 2.4, "#EDF4FC"));
             list.Columns.Add(ConfirmationColumn("УСТАНОВЛЕНО", "Installed", 1, "#A0B0C6"));
             list.Columns.Add(ConfirmationColumn("НОВАЯ ВЕРСИЯ", "Available", 1, "#89E9FC"));
-            var listCard = Card(list, "#151E2E", new Thickness(1));
-            listCard.ClipToBounds = true;
             return BuildConfirmation("Подтверждение обновлений", "Обновить программы?", "Выбрано программ: " + chosen.Count,
-                listCard, "Сохраните работу в выбранных программах. Установщики могут запросить права администратора. Нажимая «Обновить», вы принимаете лицензионные условия обновлений.",
+                RoundedContentCard(list), "Сохраните работу в выбранных программах. Установщики могут запросить права администратора. Нажимая «Обновить», вы принимаете лицензионные условия обновлений.",
                 "Обновить", "Отмена", 660);
         }
 
