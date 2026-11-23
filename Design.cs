@@ -36,6 +36,10 @@ namespace UpdateHub
         private readonly DockPanel historyPage = new DockPanel { Margin = new Thickness(28, 26, 28, 22), Visibility = Visibility.Collapsed };
         private readonly DataGrid historyTable = new DataGrid();
         private readonly TextBlock historyMessage = new TextBlock();
+        private readonly TextBlock recoveryMessage = Label("", 12, "#A0B0C6");
+        private readonly TextBlock rowAttemptDetail = Label("", 12, "#A0B0C6");
+        private readonly Button rowRecovery = new Button();
+        private readonly Button historyRecovery = new Button();
         private readonly UpdateHistory updateHistory = new UpdateHistory(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UpdateHub", "history.jsonl"));
         private bool historyWriteFailed;
         private readonly Button skipVersion = new Button { Content = "Пропустить версию", IsEnabled = false };
@@ -118,10 +122,13 @@ namespace UpdateHub
             var updatesLink = new Button { Content = "↻   Обновления", HorizontalContentAlignment = HorizontalAlignment.Left, Background = Paint("#123B50"), BorderBrush = Paint("#20617B"), Margin = new Thickness(0, 12, 0, 8) };
             var allLink = new Button { Content = "▤   Все программы", HorizontalContentAlignment = HorizontalAlignment.Left, Background = Brushes.Transparent, BorderBrush = Brushes.Transparent };
             var historyLink = new Button { Content = "◷   История", HorizontalContentAlignment = HorizontalAlignment.Left, Background = Brushes.Transparent, BorderBrush = Brushes.Transparent, Margin = new Thickness(0, 8, 0, 0) };
+            var systemLink = new Button { Content = "▣   Windows и NVIDIA", HorizontalContentAlignment = HorizontalAlignment.Left, Background = Brushes.Transparent, BorderBrush = Brushes.Transparent, Margin = new Thickness(0, 8, 0, 0) };
             var main = new DockPanel { Margin = new Thickness(28, 26, 28, 22) };
             Grid.SetColumn(main, 1); shell.Children.Add(main);
             BuildHistoryPage();
             Grid.SetColumn(historyPage, 1); shell.Children.Add(historyPage);
+            BuildSystemPage();
+            Grid.SetColumn(systemPage, 1); shell.Children.Add(systemPage);
             Action<Button, bool> highlight = (button, selected) =>
             {
                 button.Background = selected ? Paint("#123B50") : Brushes.Transparent;
@@ -131,13 +138,15 @@ namespace UpdateHub
             Action refreshNavigation = () => {
                 bool filtered = onlyUpdates.IsChecked == true;
                 bool showingHistory = historyPage.Visibility == Visibility.Visible;
-                highlight(updatesLink, !showingHistory && filtered);
-                highlight(allLink, !showingHistory && !filtered);
+                highlight(updatesLink, main.Visibility == Visibility.Visible && filtered);
+                highlight(allLink, main.Visibility == Visibility.Visible && !filtered);
                 highlight(historyLink, showingHistory);
+                highlight(systemLink, systemPage.Visibility == Visibility.Visible);
             };
             Action<bool> showPrograms = filtered =>
             {
                 historyPage.Visibility = Visibility.Collapsed;
+                systemPage.Visibility = Visibility.Collapsed;
                 main.Visibility = Visibility.Visible;
                 onlyUpdates.IsChecked = filtered;
                 RefreshView(); refreshNavigation();
@@ -147,10 +156,19 @@ namespace UpdateHub
             historyLink.Click += (s, e) =>
             {
                 main.Visibility = Visibility.Collapsed;
+                systemPage.Visibility = Visibility.Collapsed;
                 historyPage.Visibility = Visibility.Visible;
                 RefreshHistory(); refreshNavigation();
             };
+            systemLink.Click += (s, e) =>
+            {
+                main.Visibility = Visibility.Collapsed;
+                historyPage.Visibility = Visibility.Collapsed;
+                systemPage.Visibility = Visibility.Visible;
+                refreshNavigation();
+            };
             navigation.Children.Add(updatesLink); navigation.Children.Add(allLink); navigation.Children.Add(historyLink);
+            navigation.Children.Add(systemLink);
             var settingsLabel = Label("НАСТРОЙКИ", 10, "#758EAE");
             settingsLabel.Margin = new Thickness(0, 24, 0, 10);
             navigation.Children.Add(settingsLabel);
@@ -221,6 +239,16 @@ namespace UpdateHub
             logButton.Click += (s, e) => { try { Log("Журнал открыт"); System.Diagnostics.Process.Start("notepad.exe", "\"" + logFile + "\""); } catch (Exception ex) { ShowError(ex.Message); } };
             DockPanel.SetDock(logButton, Dock.Right); footer.Children.Add(logButton);
             var activity = new StackPanel();
+            rowRecovery.HorizontalAlignment = HorizontalAlignment.Left;
+            rowRecovery.Margin = new Thickness(0, 4, 0, 6);
+            rowRecovery.Click += async (s, e) =>
+            {
+                var selected = table.SelectedItem as Package;
+                if (selected != null) await RecoverUpdateAsync(selected.LastAttempt);
+            };
+            activity.Children.Add(rowAttemptDetail);
+            activity.Children.Add(rowRecovery);
+            RefreshRecoveryButtons();
             progressText.Text = "Готово к проверке"; progressText.FontWeight = FontWeights.SemiBold; progressText.Foreground = Paint("#74E6A6"); progressText.TextWrapping = TextWrapping.Wrap; activity.Children.Add(progressText);
             progress.Height = 4; progress.Maximum = 1; progress.Foreground = Paint("#22CBEE"); progress.Background = Paint("#20324A"); progress.BorderThickness = new Thickness(0); progress.Margin = new Thickness(0, 9, 0, 8); activity.Children.Add(progress);
             status.Text = "Проверьте обновления, чтобы загрузить список программ."; status.Foreground = Paint("#92A7C2"); status.FontSize = 11; status.TextWrapping = TextWrapping.Wrap; activity.Children.Add(status);
@@ -231,7 +259,7 @@ namespace UpdateHub
             table.HeadersVisibility = DataGridHeadersVisibility.Column; table.RowHeight = 54; table.ColumnHeaderHeight = 40;
             table.Background = Paint("#151E2E"); table.BorderThickness = new Thickness(0); table.SelectionMode = DataGridSelectionMode.Single;
             table.Foreground = Foreground;
-            table.SelectionChanged += (s, e) => RefreshSkipButton();
+            table.SelectionChanged += (s, e) => { RefreshSkipButton(); RefreshRecoveryButtons(); };
             ScrollViewer.SetHorizontalScrollBarVisibility(table, ScrollBarVisibility.Disabled);
             var checkFactory = new FrameworkElementFactory(typeof(CheckBox));
             checkFactory.SetBinding(CheckBox.IsCheckedProperty, new Binding("Selected") { Mode = BindingMode.TwoWay, UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged });
@@ -382,6 +410,21 @@ namespace UpdateHub
             historyMessage.Margin = new Thickness(0, 0, 0, 14);
             DockPanel.SetDock(historyMessage, Dock.Top);
             historyPage.Children.Add(historyMessage);
+            historyRecovery.HorizontalAlignment = HorizontalAlignment.Left;
+            historyRecovery.Margin = new Thickness(0, 4, 0, 8);
+            historyRecovery.Click += async (s, e) => await RecoverUpdateAsync(historyTable.SelectedItem as HistoryEntry);
+            var historyActions = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
+            historyActions.Children.Add(recoveryMessage);
+            historyActions.Children.Add(historyRecovery);
+            DockPanel.SetDock(historyActions, Dock.Top);
+            historyPage.Children.Add(historyActions);
+            historyTable.SelectionMode = DataGridSelectionMode.Single;
+            historyTable.SelectionChanged += (s, e) =>
+            {
+                var selected = historyTable.SelectedItem as HistoryEntry;
+                recoveryMessage.Text = selected == null ? "" : selected.Detail ?? "";
+                RefreshRecoveryButtons();
+            };
 
             historyTable.AutoGenerateColumns = false;
             historyTable.IsReadOnly = true;
@@ -421,13 +464,30 @@ namespace UpdateHub
             historyPage.Children.Add(Card(historyTable, "#151E2E", new Thickness(1)));
         }
 
+        private void RefreshRecoveryButtons()
+        {
+            var selected = table.SelectedItem as Package;
+            var attempt = selected == null ? null : selected.LastAttempt;
+            rowAttemptDetail.Text = attempt == null ? "" : attempt.Detail ?? "";
+            rowAttemptDetail.Visibility = String.IsNullOrEmpty(rowAttemptDetail.Text) ? Visibility.Collapsed : Visibility.Visible;
+            ConfigureRecoveryButton(rowRecovery, attempt);
+            ConfigureRecoveryButton(historyRecovery, historyTable.SelectedItem as HistoryEntry);
+        }
+
+        private void ConfigureRecoveryButton(Button button, HistoryEntry attempt)
+        {
+            button.Visibility = attempt != null && (attempt.CanRetry || attempt.CanRecheck) ? Visibility.Visible : Visibility.Collapsed;
+            button.Content = attempt != null && attempt.CanRecheck ? "Сверить версию" : "Повторить обновление";
+            button.IsEnabled = !busy && !downloadingApp;
+        }
+
         private DataTemplate StatusBadge(string path)
         {
             var badge = new FrameworkElementFactory(typeof(ContentControl));
             badge.SetValue(FrameworkElement.StyleProperty, (Style)FindResource("StatusBadge"));
             badge.SetBinding(ContentControl.ContentProperty, new Binding(path));
             badge.SetBinding(Control.ForegroundProperty, new Binding(path) { Converter = new StatusColor() });
-            badge.SetBinding(ToolTipProperty, new Binding(path));
+            badge.SetBinding(ToolTipProperty, new Binding(path == "Status" ? "StatusDetail" : path));
             return new DataTemplate { VisualTree = badge };
         }
 
@@ -447,7 +507,9 @@ namespace UpdateHub
             try
             {
                 var entries = updateHistory.Read();
+                var selected = historyTable.SelectedItem as HistoryEntry;
                 historyTable.ItemsSource = entries;
+                if (selected != null) historyTable.SelectedItem = entries.FirstOrDefault(entry => entry.Id == selected.Id);
                 historyMessage.Text = historyWriteFailed ? "Часть записей не удалось сохранить. Подробности в журнале."
                     : entries.Count == 0 ? "Здесь появятся записи после первой попытки обновления программы."
                     : "«Цель» означает версию, которую пытались установить.";

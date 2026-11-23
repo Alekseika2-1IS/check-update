@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.8.2"
+  #define AppVersion "0.9.0"
 #endif
 #ifndef BuildDir
   #define BuildDir "dist"

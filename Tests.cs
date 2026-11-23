@@ -30,6 +30,18 @@ public static class Tests
     {
         CheckRateLimitResponse();
         CheckShortcutIcon();
+        Check(NvidiaUpdates.InstalledVersion("32.0.16.2124") == new Version(621, 24)
+            && NvidiaUpdates.InstalledVersion("32.0.15.6094") == new Version(560, 94)
+            && NvidiaUpdates.InstalledVersion("32.0") == null, "NVIDIA Windows driver versions convert to catalog versions");
+        string hardware = "2486_10DE_87C6_1043";
+        string offer = "{\"criteria\":{\"IsSupported\":{\"state\":\"true\",\"DeviceID\":\"2486\",\"Vendor\":\"10DE\",\"SubSystemID\":\"87C6\",\"SubVendorID\":\"1043\"}},\"DriverAttributes\":{\"Version\":\"621.24\",\"IsCRD\":1,\"IsBeta\":0,\"IsDC\":1}}";
+        Check(NvidiaUpdates.ReadOffer(offer, hardware, true) == new Version(621, 24)
+            && NvidiaUpdates.ReadOffer(offer, hardware, false) == null
+            && NvidiaUpdates.ReadOffer(offer, "2486_10DE_0000_1043", true) == null
+            && NvidiaUpdates.ReadOffer(offer.Replace("\"IsBeta\":0", "\"IsBeta\":1"), hardware, true) == null,
+            "NVIDIA offers must match adapter and channel and exclude beta");
+        Check(Winget.UpgradeNeedsVerification(unchecked((int)0x8A150109))
+            && !Winget.UpgradeNeedsVerification(unchecked((int)0x8A15010A)), "WinGet distinguishes a pending restart from an installation that should be retried");
         string historyPath = Path.Combine(Path.GetTempPath(), "CheckUpdate-history-" + Guid.NewGuid().ToString("N") + ".jsonl");
         try
         {
@@ -46,6 +58,12 @@ public static class Tests
             var reopened = new UpdateHistory(historyPath).Read();
             Check(reopened.Count == 2 && reopened.Any(row => row.Id == entry.Id && row.Target == "2.0" && row.Result == "Установлено")
                 && reopened.Any(row => row.Id == failed.Id && row.Result == "Не завершено"), "history survives restart and a truncated line without duplicate attempts");
+            var matching = new Package { Name = "Другая программа", Id = "Vendor.App" };
+            var other = new Package { Name = matching.Name, Id = "Other.App" };
+            Check(failed.CanRetry && !failed.CanRecheck && failed.FindPackage(new[] { matching, other }) == null,
+                "legacy recovery rejects ambiguous program names");
+            failed.PackageId = matching.Id;
+            Check(failed.FindPackage(new[] { matching, other }) == matching, "recovery uses the saved package ID");
         }
         finally { File.Delete(historyPath); }
         string header = Row("Name", "Id", "Version", "Available") + "\n" + new string('-', 90) + "\n";
@@ -190,6 +208,28 @@ public static class Tests
         window.Width = window.MinWidth; window.Height = window.MinHeight;
         Capture(window, "preview-small.png");
         CheckVisualEffects(window);
+        var table = (System.Windows.Controls.DataGrid)typeof(MainWindow).GetField("table", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
+        var action = (System.Windows.Controls.Button)typeof(MainWindow).GetField("rowRecovery", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
+        var attempt = new HistoryEntry { PackageId = target.Id, Requested = target.Available, Result = "Не завершено", Detail = "Закройте программу." };
+        target.LastAttempt = attempt;
+        table.SelectedItem = null;
+        table.SelectedItem = target;
+        Check(action.Visibility == Visibility.Visible && (string)action.Content == "Повторить обновление", "failed program row offers individual retry");
+        attempt.Result = "Версия не подтверждена";
+        typeof(MainWindow).GetMethod("RefreshRecoveryButtons", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(window, null);
+        Check((string)action.Content == "Сверить версию", "unconfirmed program row offers verification");
+        if (!offline)
+        {
+            var checkingSystem = typeof(MainWindow).GetField("checkingSystem", BindingFlags.Instance | BindingFlags.NonPublic);
+            var deadline = DateTime.UtcNow.AddSeconds(130);
+            while ((bool)checkingSystem.GetValue(window) && DateTime.UtcNow < deadline) WaitForAnimation(100);
+            Check(!(bool)checkingSystem.GetValue(window), "system checks finish independently of the program scan");
+            var system = (FrameworkElement)typeof(MainWindow).GetField("systemPage", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
+            var shell = (System.Windows.Controls.Panel)system.Parent;
+            foreach (UIElement element in shell.Children)
+                if (System.Windows.Controls.Grid.GetColumn(element) == 1) element.Visibility = element == system ? Visibility.Visible : Visibility.Collapsed;
+            Capture(window, "preview-system.png");
+        }
         window.Close(); app.Shutdown();
         Console.WriteLine("All " + checks + " checks passed. No updates installed.");
     }

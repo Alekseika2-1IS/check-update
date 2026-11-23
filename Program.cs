@@ -16,7 +16,7 @@ using System.Windows.Media.Imaging;
 
 [assembly: System.Reflection.AssemblyTitle("Check Update")]
 [assembly: System.Reflection.AssemblyProduct("Check Update")]
-[assembly: System.Reflection.AssemblyVersion("0.8.2.0")]
+[assembly: System.Reflection.AssemblyVersion("0.9.0.0")]
 
 namespace UpdateHub
 {
@@ -28,6 +28,8 @@ namespace UpdateHub
         public string Available { get; set; }
         public bool CanUpdate { get { return !String.IsNullOrWhiteSpace(Available); } }
         public ImageSource Icon { get; set; }
+        public HistoryEntry LastAttempt { get; set; }
+        public string StatusDetail { get { return LastAttempt == null ? Status : LastAttempt.Detail ?? Status; } }
         public string Initial { get { return String.IsNullOrWhiteSpace(Name) ? "?" : Name.Substring(0, 1).ToUpperInvariant(); } }
         private bool skipped;
         public bool Skipped
@@ -39,7 +41,7 @@ namespace UpdateHub
         private bool selected;
         public bool Selected { get { return selected; } set { selected = value; Changed("Selected"); } }
         private string status;
-        public string Status { get { return Skipped ? "Версия пропущена" : status ?? (CanUpdate ? "Есть обновление" : "Без обновлений"); } set { status = value; Changed("Status"); } }
+        public string Status { get { return Skipped ? "Версия пропущена" : status ?? (CanUpdate ? "Есть обновление" : "Без обновлений"); } set { status = value; Changed("Status"); Changed("StatusDetail"); } }
         public event PropertyChangedEventHandler PropertyChanged;
         private void Changed(string property) { if (PropertyChanged != null) PropertyChanged(this, new PropertyChangedEventArgs(property)); }
     }
@@ -56,7 +58,7 @@ namespace UpdateHub
     public static class UpdateVerifier
     {
         public static async Task<VerificationResult> VerifyAsync(ICollection<string> updatedIds,
-            Func<Task<List<Package>>> scan, Func<int, Task> delay)
+            Func<Task<List<Package>>> scan, Func<int, Task> delay, Func<string, List<Package>, bool> isPending = null)
         {
             var result = new VerificationResult();
             for (int attempt = 0; attempt < 4; attempt++)
@@ -66,7 +68,9 @@ namespace UpdateHub
                 {
                     result.Packages = await scan();
                     result.Error = null;
-                    result.Pending = updatedIds.Count(id => result.Packages.Any(p => String.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase) && p.CanUpdate));
+                    result.Pending = updatedIds.Count(id => isPending == null
+                        ? result.Packages.Any(p => String.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase) && p.CanUpdate)
+                        : isPending(id, result.Packages));
                     if (result.Pending == 0) return result;
                 }
                 catch (Exception ex) { result.Error = ex.Message; }
@@ -77,6 +81,28 @@ namespace UpdateHub
 
     public static class Winget
     {
+        public static string UpgradeDetail(int code)
+        {
+            switch (unchecked((uint)code))
+            {
+                case 0x8A15002B: return "WinGet больше не видит подходящего обновления.";
+                case 0x8A150101:
+                case 0x8A150103: return "Закройте программу и повторите обновление.";
+                case 0x8A150102: return "Дождитесь окончания другой установки и повторите обновление.";
+                case 0x8A150105: return "Освободите место на диске и повторите обновление.";
+                case 0x8A150107: return "Проверьте подключение к интернету и повторите обновление.";
+                case 0x8A150109:
+                case 0x8A15010B: return "Для завершения установки требуется перезагрузка Windows. Затем сверьте версию.";
+                case 0x8A15010A: return "Перезагрузите Windows, затем повторите обновление.";
+                case 0x8A15010C: return "Установку отменили. При повторе завершите шаги в окне установщика.";
+                default: return String.Format("Установщик или WinGet завершился с кодом 0x{0:X8}. Подробности в журнале.", code);
+            }
+        }
+
+        public static bool UpgradeNeedsVerification(int code)
+        {
+            return code == 0 || unchecked((uint)code) == 0x8A150109 || unchecked((uint)code) == 0x8A15010B;
+        }
         public static CommandResult Run(string arguments, int timeout)
         {
             var info = new ProcessStartInfo("winget.exe", arguments) {
@@ -218,6 +244,7 @@ namespace UpdateHub
         {
             busy = value; scan.IsEnabled = !value && !downloadingApp; update.IsEnabled = !value && !downloadingApp && packages.Any(p => p.CanSelect && p.Selected);
             RefreshSkipButton();
+            RefreshRecoveryButtons();
             appUpdate.IsEnabled = !value && !checkingVersion && !downloadingApp;
             table.IsEnabled = !value; selectAll.IsEnabled = !value; onlyUpdates.IsEnabled = !value;
             if (!value) progress.IsIndeterminate = false;
@@ -298,16 +325,76 @@ namespace UpdateHub
 
         private void ReplacePackages(List<Package> found)
         {
+            var previousAttempts = packages.Select(p => p.LastAttempt).Where(entry => entry != null).ToList();
             foreach (var p in packages) p.PropertyChanged -= SelectionChanged;
             packages.Clear();
             LoadSkippedVersions(found);
             foreach (var p in found) { p.PropertyChanged += SelectionChanged; packages.Add(p); }
+            ShowAttempts(previousAttempts.Where(entry => entry.CanRetry || entry.CanRecheck));
             selectAll.IsChecked = false;
             RefreshCounters(); RefreshView();
         }
 
+        private void ShowAttempts(IEnumerable<HistoryEntry> attempts)
+        {
+            foreach (var attempt in attempts)
+            {
+                var package = attempt.FindPackage(packages);
+                if (package == null || (package.LastAttempt != null && package.LastAttempt.Time > attempt.Time)) continue;
+                if (attempt.CanRetry && (!package.CanUpdate || !String.Equals(package.Available, attempt.Requested, StringComparison.OrdinalIgnoreCase))) continue;
+                package.LastAttempt = attempt;
+                package.Status = attempt.Result;
+            }
+            RefreshRecoveryButtons();
+        }
+
+        private async Task RecoverUpdateAsync(HistoryEntry attempt)
+        {
+            if (attempt == null || busy || downloadingApp) return;
+            SetBusy(true);
+            status.Text = "Проверяем текущую версию: " + attempt.Name;
+            recoveryMessage.Text = status.Text;
+            ShowProgress(status.Text, 0, 1, true);
+            Package current = null;
+            try
+            {
+                var selected = new HashSet<string>(packages.Where(p => p.Selected).Select(p => p.Id), StringComparer.OrdinalIgnoreCase);
+                var found = await LoadPackagesAsync();
+                current = attempt.FindPackage(found);
+                ReplacePackages(found);
+                foreach (var package in packages.Where(p => p.CanSelect && selected.Contains(p.Id))) package.Selected = true;
+                if (current != null && table.Items.Contains(current)) table.SelectedItem = current;
+                if (attempt.CanRecheck)
+                {
+                    attempt.Verify(current, true);
+                    if (attempt.Installed != null) SaveHistory(attempt);
+                    ShowAttempts(new[] { attempt });
+                    status.Text = attempt.Name + ": " + attempt.Result + ".";
+                }
+                else if (current == null || !current.CanSelect)
+                    status.Text = "Для «" + attempt.Name + "» не найдено доступного обновления для повтора.";
+                else status.Text = "Доступная версия «" + current.Name + "» проверена.";
+                ShowProgress("Проверка завершена", 1, 1, false);
+            }
+            catch (Exception ex)
+            {
+                Log("Повторная проверка: " + ex);
+                status.Text = "Не удалось сверить версии. Попробуйте ещё раз. Подробности в журнале.";
+                ShowProgress("Проверка не завершена", 0, 1, false);
+                current = null;
+            }
+            finally
+            {
+                recoveryMessage.Text = status.Text;
+                SetBusy(false);
+            }
+            if (attempt.CanRetry && current != null && current.CanSelect)
+                await InstallUpdatesAsync(new List<Package> { current });
+        }
+
         private async Task ScanAsync()
         {
+            var systemScan = CheckSystemUpdatesAsync();
             SetBusy(true); status.Text = "Проверяем каталог Windows… Это может занять до двух минут.";
             ShowProgress("Проверка доступных обновлений…", 0, 1, true);
             try
@@ -319,6 +406,7 @@ namespace UpdateHub
             catch (Win32Exception) { progressText.Text = "Проверка не завершена"; status.Text = "WinGet не найден. Установите или обновите «Установщик приложений» в Microsoft Store."; }
             catch (Exception ex) { progressText.Text = "Проверка не завершена"; Log(ex.ToString()); status.Text = ex.Message; }
             finally { SetBusy(false); }
+            await systemScan;
         }
 
         private async Task UpdateAsync()
@@ -326,35 +414,51 @@ namespace UpdateHub
             table.CommitEdit(); table.CommitEdit();
             var chosen = packages.Where(p => p.Selected && p.CanSelect).ToList();
             if (chosen.Count == 0) { ShowError("Отметьте программы, которые хотите обновить."); return; }
+            await InstallUpdatesAsync(chosen);
+        }
+
+        private async Task InstallUpdatesAsync(List<Package> chosen)
+        {
             string list = String.Join("\n", chosen.Select(p => "• " + p.Name + " → " + p.Available));
             if (MessageBox.Show(this, "Обновить выбранные программы?\n\n" + list + "\n\nСохраните работу в этих программах. Продолжая, вы принимаете лицензионные условия выбранных обновлений. Установщики могут запросить права администратора.", "Подтверждение обновлений", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
             installing = true; SetBusy(true); int succeeded = 0; int failed = 0;
             ShowProgress("Подготовка обновлений…", 0, chosen.Count, false);
             var successfulIds = new List<string>();
-            var failedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var pendingHistory = new Dictionary<string, HistoryEntry>(StringComparer.OrdinalIgnoreCase);
+            var attempts = new List<HistoryEntry>();
             try
             {
                 foreach (var p in chosen)
                 {
-                    var history = new HistoryEntry { Name = p.Name, Before = p.Installed, Requested = p.Available, Result = "Не завершено" };
+                    var history = new HistoryEntry { PackageId = p.Id, Name = p.Name, Before = p.Installed, Requested = p.Available, Result = "Не завершено" };
+                    attempts.Add(history);
+                    p.LastAttempt = null;
                     p.Status = "Установка…"; status.Text = "Обновляем: " + p.Name + ". Если открылся установщик, завершите его шаги.";
                     ShowProgress(String.Format("Программа {0} из {1}: {2} — установка…", succeeded + failed + 1, chosen.Count, p.Name), succeeded + failed, chosen.Count, false);
                     try
                     {
                         var result = await Task.Run(() => Winget.Run("upgrade --id " + Winget.Quote(p.Id) + " --exact --source winget --interactive --accept-package-agreements --disable-interactivity", -1));
                         Log("Обновление " + p.Id + ": " + result.Code + "\n" + result.Output + "\n" + result.Error);
-                        bool ok = result.Code == 0;
-                        p.Status = ok ? "Установлено — сверяем версии…" : "Не завершено — см. журнал";
+                        bool ok = Winget.UpgradeNeedsVerification(result.Code);
                         if (ok)
                         {
                             succeeded++; successfulIds.Add(p.Id);
                             history.Result = "Версия не подтверждена";
-                            pendingHistory.Add(p.Id, history);
+                            history.Detail = result.Code == 0 ? "Установщик завершился. Windows пока не подтвердила новую версию." : Winget.UpgradeDetail(result.Code);
                         }
-                        else { failed++; failedIds.Add(p.Id); }
+                        else
+                        {
+                            failed++;
+                            history.Detail = Winget.UpgradeDetail(result.Code);
+                        }
                     }
-                    catch (Exception ex) { failed++; failedIds.Add(p.Id); p.Status = "Ошибка — см. журнал"; Log(ex.ToString()); }
+                    catch (Exception ex)
+                    {
+                        failed++;
+                        history.Detail = "Не удалось запустить или дождаться WinGet. Подробности в журнале.";
+                        Log(ex.ToString());
+                    }
+                    p.LastAttempt = history;
+                    p.Status = history.Result;
                     SaveHistory(history);
                     p.Selected = false;
                     ShowProgress(String.Format("Обработано программ: {0} из {1}", succeeded + failed, chosen.Count), succeeded + failed, chosen.Count, false);
@@ -363,29 +467,32 @@ namespace UpdateHub
                 installing = false;
                 status.Text = "Установка завершена. Автоматически сверяем версии… Если Windows ещё не обновила данные, проверка повторится.";
                 ShowProgress("Установка завершена — сверка версий…", chosen.Count, chosen.Count, true);
-                var verification = await UpdateVerifier.VerifyAsync(successfulIds, LoadPackagesAsync, milliseconds => Task.Delay(milliseconds));
-                foreach (var pending in pendingHistory)
+                var pendingById = attempts.Where(entry => entry.CanRecheck).ToDictionary(entry => entry.PackageId, StringComparer.OrdinalIgnoreCase);
+                var verification = await UpdateVerifier.VerifyAsync(successfulIds, LoadPackagesAsync, milliseconds => Task.Delay(milliseconds),
+                    (id, found) => !pendingById[id].MatchesInstalledVersion(pendingById[id].FindPackage(found)));
+                foreach (var pending in attempts.Where(entry => entry.CanRecheck))
                 {
-                    var observed = verification.Packages == null ? null : verification.Packages.FirstOrDefault(p => String.Equals(p.Id, pending.Key, StringComparison.OrdinalIgnoreCase));
-                    pending.Value.Verify(observed, verification.Error == null);
-                    if (pending.Value.Installed != null) SaveHistory(pending.Value);
+                    pending.Verify(verification.Packages == null ? null : pending.FindPackage(verification.Packages), verification.Error == null);
+                    if (pending.Installed != null) SaveHistory(pending);
                 }
                 if (verification.Packages != null)
                 {
+                    var selected = new HashSet<string>(packages.Where(p => p.Selected).Select(p => p.Id), StringComparer.OrdinalIgnoreCase);
+                    var active = table.SelectedItem as Package;
                     ReplacePackages(verification.Packages);
-                    foreach (var p in packages)
-                    {
-                        if (failedIds.Contains(p.Id)) p.Status = "Не завершено — см. журнал";
-                        else if (successfulIds.Contains(p.Id) && p.CanUpdate) p.Status = "Обновление всё ещё доступно";
-                    }
+                    foreach (var package in packages.Where(p => p.CanSelect && selected.Contains(p.Id))) package.Selected = true;
+                    if (active != null)
+                        table.SelectedItem = table.Items.Cast<Package>().FirstOrDefault(p => String.Equals(p.Id, active.Id, StringComparison.OrdinalIgnoreCase));
                 }
-                string outcome = String.Format("Успешно: {0}. Не завершено: {1}. ", succeeded, failed);
+                ShowAttempts(attempts);
+                string outcome = String.Format("Установлено: {0}. Не завершено: {1}. Версия не подтверждена: {2}. ",
+                    attempts.Count(entry => entry.Installed != null), failed, attempts.Count(entry => entry.CanRecheck));
                 if (verification.Error != null)
                 {
                     Log("Автоматическая проверка: " + verification.Error);
                     status.Text = outcome + "Не удалось подтвердить итоговые версии. " + (verification.Packages == null ? "Список сохранён прежним. " : "Показана последняя успешная проверка. ") + "Повторите проверку позднее.";
                 }
-                else status.Text = outcome + "Список обновлён автоматически." + (verification.Pending > 0 ? " Для некоторых программ обновление по-прежнему доступно — Windows могла ещё не обновить данные или установщик не применил новую версию." : "");
+                else status.Text = outcome + "Список обновлён автоматически." + (verification.Pending > 0 ? " Неподтверждённые версии можно сверить повторно в списке или в истории." : "");
                 ShowProgress(verification.Error != null ? "Установка завершена; итоговые версии не подтверждены" : "Готово — список обновлён", chosen.Count, chosen.Count, false);
             }
             finally

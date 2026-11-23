@@ -18,6 +18,19 @@ namespace UpdateHub
         [DataMember] public string Requested { get; set; }
         [DataMember] public string Installed { get; set; }
         [DataMember] public string Result { get; set; }
+        [DataMember(EmitDefaultValue = false)] public string PackageId { get; set; }
+        [DataMember(EmitDefaultValue = false)] public string Detail { get; set; }
+
+        public bool CanRecheck { get { return Result == "Версия не подтверждена"; } }
+        public bool CanRetry { get { return Result == "Не завершено"; } }
+
+        public Package FindPackage(IEnumerable<Package> packages)
+        {
+            var matches = packages.Where(p => String.IsNullOrEmpty(PackageId)
+                ? String.Equals(p.Name, Name, StringComparison.OrdinalIgnoreCase)
+                : String.Equals(p.Id, PackageId, StringComparison.OrdinalIgnoreCase)).Take(2).ToList();
+            return matches.Count == 1 ? matches[0] : null;
+        }
 
         public HistoryEntry()
         {
@@ -28,15 +41,21 @@ namespace UpdateHub
         public string Date { get { return Time.ToLocalTime().ToString("dd.MM.yyyy HH:mm"); } }
         public string Target { get { return String.IsNullOrEmpty(Installed) ? Requested + " (цель)" : Installed; } }
 
-        public void Verify(Package current, bool scanSucceeded)
+        public bool MatchesInstalledVersion(Package current)
         {
-            if (scanSucceeded && current != null && !String.IsNullOrWhiteSpace(current.Installed) &&
+            return current != null && !String.IsNullOrWhiteSpace(current.Installed) &&
                 !String.Equals(current.Installed, "Unknown", StringComparison.OrdinalIgnoreCase) &&
                 !String.Equals(current.Installed, Before, StringComparison.OrdinalIgnoreCase) &&
-                (String.Equals(current.Installed, Requested, StringComparison.OrdinalIgnoreCase) || !current.CanUpdate))
+                (String.Equals(current.Installed, Requested, StringComparison.OrdinalIgnoreCase) || !current.CanUpdate);
+        }
+
+        public void Verify(Package current, bool scanSucceeded)
+        {
+            if (scanSucceeded && MatchesInstalledVersion(current))
             {
                 Installed = current.Installed;
                 Result = "Установлено";
+                Detail = "Установленная версия подтверждена.";
             }
             else Result = "Версия не подтверждена";
         }
