@@ -16,7 +16,7 @@ using System.Windows.Media.Imaging;
 
 [assembly: System.Reflection.AssemblyTitle("Check Update")]
 [assembly: System.Reflection.AssemblyProduct("Check Update")]
-[assembly: System.Reflection.AssemblyVersion("0.9.1.0")]
+[assembly: System.Reflection.AssemblyVersion("0.9.2.0")]
 
 namespace UpdateHub
 {
@@ -278,9 +278,7 @@ namespace UpdateHub
             try
             {
                 availableRelease = await SelfUpdate.CheckAsync();
-                appVersionStatus.Text = availableRelease == null ? "Новых опубликованных версий нет" : "Доступна версия " + SelfUpdate.ParseVersion(availableRelease.Tag).ToString(3);
-                appUpdate.Content = availableRelease == null ? "Проверить версию" : "↓ Скачать обновление";
-                appUpdate.Background = availableRelease == null ? Paint("#1B304B") : Paint("#145540");
+                ShowAppRelease(availableRelease);
             }
             catch (GitHubRateLimitException ex)
             {
@@ -299,7 +297,8 @@ namespace UpdateHub
             {
                 if (downloadedApp == null)
                     downloadedApp = await SelfUpdate.DownloadAsync(availableRelease, new Progress<int>(percent => appVersionStatus.Text = "Скачивание Check Update: " + percent + "%"));
-                appVersionStatus.Text = "Обновление скачано и проверено"; appUpdate.Content = "Перезапустить";
+                appVersionStatus.Text = "Обновление скачано и проверено"; appUpdate.FontSize = 12;
+                SetButtonLabel(appUpdate, "Перезапустить");
             }
             catch (Exception ex) { Log("Скачивание приложения: " + ex); appVersionStatus.Text = "Скачать не удалось — повторите позже"; ShowError(ex.Message); }
             finally { downloadingApp = false; SetBusy(false); }

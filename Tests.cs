@@ -179,6 +179,7 @@ public static class Tests
         Check(items.Count(p => p.Selected) == (target.CanUpdate ? 1 : 0) && target.Selected == target.CanUpdate, "select all only selects visible updateable results");
         var selectedCounter = (System.Windows.Controls.TextBlock)typeof(MainWindow).GetField("selectedCount", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
         Check(selectedCounter.Text == items.Count(p => p.Selected).ToString(), "selected counter follows selection through search");
+        CheckUpdateControls(window, select);
         foreach (var p in items) p.Selected = false; select.IsChecked = false;
         search.Text = "no-such-program-xyz";
         Check(!view.Cast<Package>().Any(), "unmatched search returns empty view");
@@ -228,6 +229,53 @@ public static class Tests
         CheckSidebarNavigation(window);
         window.Close(); app.Shutdown();
         Console.WriteLine("All " + checks + " checks passed. No updates installed.");
+    }
+
+    private static void CheckUpdateControls(MainWindow window, System.Windows.Controls.CheckBox select)
+    {
+        window.UpdateLayout();
+        var box = (System.Windows.Controls.Border)select.Template.FindName("Box", select);
+        var mark = (System.Windows.Shapes.Path)select.Template.FindName("Mark", select);
+        var pen = new Pen(mark.Stroke, mark.StrokeThickness)
+        {
+            StartLineCap = mark.StrokeStartLineCap, EndLineCap = mark.StrokeEndLineCap, LineJoin = mark.StrokeLineJoin
+        };
+        foreach (int thickness in new[] { 1, 2 })
+        {
+            box.BorderThickness = new Thickness(thickness);
+            window.UpdateLayout();
+            var ink = mark.RenderedGeometry.GetRenderBounds(pen);
+            var center = mark.TranslatePoint(new Point(ink.Left + ink.Width / 2, ink.Top + ink.Height / 2), box);
+            Check(mark.IsVisible && Math.Abs(center.X - box.ActualWidth / 2) < 0.1 && Math.Abs(center.Y - box.ActualHeight / 2) < 0.1,
+                "select shown checkmark is centered with border " + thickness);
+        }
+        box.ClearValue(System.Windows.Controls.Border.BorderThicknessProperty);
+
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var scan = (System.Windows.Controls.Button)typeof(MainWindow).GetField("scan", flags).GetValue(window);
+        var download = (System.Windows.Controls.Button)typeof(MainWindow).GetField("appUpdate", flags).GetValue(window);
+        var showRelease = typeof(MainWindow).GetMethod("ShowAppRelease", flags);
+        showRelease.Invoke(window, new object[] { new AppRelease { Tag = "v0.9.3" } });
+        Check(UpdateIcon(scan) != UpdateIcon(download)
+            && System.Windows.Automation.AutomationProperties.GetName(download) == "Скачать обновление",
+            "scan and download have distinct vector icons and an accessible download name");
+        Capture(window, "preview-update-controls.png");
+        var buttonContent = (System.Windows.Controls.StackPanel)download.Content;
+        var label = (System.Windows.Controls.TextBlock)buttonContent.Children[1];
+        label.Measure(new Size(Double.PositiveInfinity, Double.PositiveInfinity));
+        Check(label.DesiredSize.Width + buttonContent.Children[0].DesiredSize.Width + download.Padding.Left + download.Padding.Right
+            <= download.ActualWidth - download.BorderThickness.Left - download.BorderThickness.Right, "download label fits inside its button");
+        showRelease.Invoke(window, new[] { typeof(MainWindow).GetField("availableRelease", flags).GetValue(window) });
+        select.IsChecked = false;
+        Check(mark.Visibility == Visibility.Collapsed, "unchecked box hides the checkmark");
+    }
+
+    private static string UpdateIcon(System.Windows.Controls.Button button)
+    {
+        var row = (System.Windows.Controls.StackPanel)button.Content;
+        var viewbox = (System.Windows.Controls.Viewbox)row.Children[0];
+        var canvas = (System.Windows.Controls.Canvas)viewbox.Child;
+        return ((System.Windows.Shapes.Path)canvas.Children[0]).Data.ToString();
     }
 
     private static void CheckSidebarNavigation(MainWindow window)

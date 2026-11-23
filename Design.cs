@@ -58,6 +58,9 @@ namespace UpdateHub
             return new TextBlock { Text = text, FontSize = size, Foreground = Paint(color), TextWrapping = TextWrapping.Wrap };
         }
 
+        private const string RefreshIcon = "M4,10 A8,8 0 0 1 18.5,7.5 L20,9 M20,4 V9 H15 M20,14 A8,8 0 0 1 5.5,16.5 L4,15 M4,20 V15 H9";
+        private const string DownloadIcon = "M12,4 V14 M8,10 L12,14 L16,10 M5,15 V18 A2,2 0 0 0 7,20 H17 A2,2 0 0 0 19,18 V15";
+
         private static Button NavigationButton(string title, string outline)
         {
             var button = new Button
@@ -67,7 +70,18 @@ namespace UpdateHub
                 MinHeight = 44,
                 HorizontalContentAlignment = HorizontalAlignment.Left
             };
+            SetButtonLabel(button, title, outline, 24, 10);
+            return button;
+        }
+
+        private static void SetButtonLabel(Button button, string title, string outline = null, double size = 18, double spacing = 7)
+        {
             System.Windows.Automation.AutomationProperties.SetName(button, title);
+            if (outline == null)
+            {
+                button.Content = title;
+                return;
+            }
             var icon = new System.Windows.Shapes.Path
             {
                 Data = Geometry.Parse(outline),
@@ -77,13 +91,26 @@ namespace UpdateHub
                 StrokeLineJoin = PenLineJoin.Round
             };
             icon.SetBinding(System.Windows.Shapes.Shape.StrokeProperty, new Binding("Foreground") { Source = button });
-            var iconSlot = new Canvas { Width = 24, Height = 24, Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
+            var iconSlot = new Canvas { Width = 24, Height = 24 };
             iconSlot.Children.Add(icon);
             var content = new StackPanel { Orientation = Orientation.Horizontal };
-            content.Children.Add(iconSlot);
+            content.Children.Add(new Viewbox
+            {
+                Width = size, Height = size, Child = iconSlot,
+                Margin = new Thickness(0, 0, spacing, 0), VerticalAlignment = VerticalAlignment.Center
+            });
             content.Children.Add(new TextBlock { Text = title, VerticalAlignment = VerticalAlignment.Center });
             button.Content = content;
-            return button;
+        }
+
+        private void ShowAppRelease(AppRelease release)
+        {
+            appVersionStatus.Text = release == null ? "Новых опубликованных версий нет"
+                : "Доступна версия " + SelfUpdate.ParseVersion(release.Tag).ToString(3);
+            appUpdate.FontSize = release == null ? 12 : 11;
+            SetButtonLabel(appUpdate, release == null ? "Проверить версию" : "Скачать обновление",
+                release == null ? null : DownloadIcon, 17, 5);
+            appUpdate.Background = release == null ? Paint("#1B304B") : Paint("#145540");
         }
 
         private Border Metric(TextBlock value, string caption, string accent)
@@ -141,14 +168,13 @@ namespace UpdateHub
             appCardContent.Children.Add(version);
             appVersionStatus.Text = "Обновления приложения через GitHub"; appVersionStatus.TextWrapping = TextWrapping.Wrap; appVersionStatus.FontSize = 12; appVersionStatus.Foreground = Paint("#A0B0C6"); appVersionStatus.Margin = new Thickness(0, 0, 0, 12);
             appCardContent.Children.Add(appVersionStatus);
-            appUpdate.Content = "Проверить версию"; appUpdate.Padding = new Thickness(8, 10, 8, 10); appUpdate.FontSize = 12;
+            SetButtonLabel(appUpdate, "Проверить версию"); appUpdate.Padding = new Thickness(8, 10, 8, 10); appUpdate.FontSize = 12;
             appUpdate.Click += async (s, e) => { if (availableRelease == null) await CheckAppVersionAsync(); else await DownloadAppAsync(); };
             appCardContent.Children.Add(appUpdate);
             var appCard = Card(appCardContent, "#172234", new Thickness(13)); DockPanel.SetDock(appCard, Dock.Bottom); sidebar.Children.Add(appCard);
 
             var navigation = new StackPanel();
-            var updatesLink = NavigationButton("Обновления",
-                "M4,10 A8,8 0 0 1 18.5,7.5 L20,9 M20,4 V9 H15 M20,14 A8,8 0 0 1 5.5,16.5 L4,15 M4,20 V15 H9");
+            var updatesLink = NavigationButton("Обновления", RefreshIcon);
             var allLink = NavigationButton("Все программы",
                 "M5,4 H9 A1,1 0 0 1 10,5 V9 A1,1 0 0 1 9,10 H5 A1,1 0 0 1 4,9 V5 A1,1 0 0 1 5,4 Z " +
                 "M15,4 H19 A1,1 0 0 1 20,5 V9 A1,1 0 0 1 19,10 H15 A1,1 0 0 1 14,9 V5 A1,1 0 0 1 15,4 Z " +
@@ -216,7 +242,8 @@ namespace UpdateHub
             sidebar.Children.Add(navigation);
 
             var heading = new DockPanel { Margin = new Thickness(0, 0, 0, 20) };
-            scan.Content = "↻  Проверить обновления"; scan.Padding = new Thickness(16, 12, 16, 12); scan.VerticalAlignment = VerticalAlignment.Center;
+            SetButtonLabel(scan, "Проверить обновления", RefreshIcon, 20, 7);
+            scan.Padding = new Thickness(16, 12, 16, 12); scan.VerticalAlignment = VerticalAlignment.Center;
             scan.Background = Paint("#79DFF4");
             scan.Foreground = Paint("#102332");
             scan.BorderBrush = Paint("#79DFF4");
