@@ -16,7 +16,7 @@ using System.Windows.Media.Imaging;
 
 [assembly: System.Reflection.AssemblyTitle("Check Update")]
 [assembly: System.Reflection.AssemblyProduct("Check Update")]
-[assembly: System.Reflection.AssemblyVersion("0.10.3.0")]
+[assembly: System.Reflection.AssemblyVersion("0.11.1.0")]
 
 namespace UpdateHub
 {

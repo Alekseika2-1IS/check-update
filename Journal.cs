@@ -103,7 +103,7 @@ namespace UpdateHub
         private readonly CheckBox journalErrorsOnly = new CheckBox { Content = "Только ошибки", VerticalAlignment = VerticalAlignment.Center };
         private readonly Button journalRefresh = new Button { Content = "Обновить" };
         private readonly Button journalCopy = new Button { Content = "Копировать записи" };
-        private readonly TextBlock journalStatus = Label("", 12, "#A0B0C6");
+        private readonly TextBlock journalStatus = Label("", 12, "#9CAABB");
         private readonly RichTextBox journalText = new RichTextBox();
         private List<JournalEntry> visibleJournal = new List<JournalEntry>();
         private JournalSnapshot journal = new JournalSnapshot();
@@ -138,7 +138,7 @@ namespace UpdateHub
             journalText.IsReadOnly = true;
             journalText.IsUndoEnabled = false;
             journalText.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-            journalText.Background = Paint("#151E2E");
+            journalText.Background = Paint("#171C23");
             journalText.Foreground = Paint("#C8D7E9");
             journalText.SelectionBrush = Paint("#2D627C");
             journalText.BorderThickness = new Thickness(0);

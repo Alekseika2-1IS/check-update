@@ -210,6 +210,7 @@ public static class Tests
         window.Width = window.MinWidth; window.Height = window.MinHeight;
         Capture(window, "preview-small.png");
         CheckVisualEffects(window);
+        CheckCardLighting(window);
         var table = (System.Windows.Controls.DataGrid)typeof(MainWindow).GetField("table", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
         var action = (System.Windows.Controls.Button)typeof(MainWindow).GetField("rowRecovery", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
         var attempt = new HistoryEntry { PackageId = target.Id, Requested = target.Available, Result = "Не завершено", Detail = "Закройте программу." };
@@ -518,6 +519,16 @@ public static class Tests
             Check(pages[i].IsVisible &&
                 links.Where(link => System.Windows.Automation.AutomationProperties.GetItemStatus(link) == "Выбран раздел").SequenceEqual(new[] { links[i] }),
                 "sidebar opens and highlights " + names[i]);
+            if (i < 2)
+            {
+                window.UpdateLayout();
+                var update = (System.Windows.Controls.Button)typeof(MainWindow).GetField("update", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(window);
+                var origin = update.TranslatePoint(new Point(), window);
+                Check(update.IsVisible && origin.X >= 0 && origin.Y >= 0
+                    && origin.X + update.ActualWidth <= window.ActualWidth
+                    && origin.Y + update.ActualHeight <= window.ActualHeight,
+                    "primary install action remains visible in " + names[i]);
+            }
             if (names[i] == "Windows и NVIDIA") Capture(window, "preview-system.png");
         }
     }
@@ -553,6 +564,40 @@ public static class Tests
         timer.Start();
         Dispatcher.PushFrame(frame);
         timer.Stop();
+    }
+
+    private static void CheckCardLighting(MainWindow owner)
+    {
+        var content = new System.Windows.Controls.Button { Content = "Проверить версию" };
+        var originalPadding = new Thickness(13);
+        var card = new System.Windows.Controls.Border { Width = 320, Height = 160, Padding = originalPadding,
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Child = content };
+        typeof(MainWindow).GetMethod("IlluminateCard", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(owner, new object[] { card });
+        var layers = (System.Windows.Controls.Grid)card.Child;
+        var light = (System.Windows.Controls.Border)layers.Children[0];
+        light.Tag = true;
+        var preview = new Window { Content = card, SizeToContent = SizeToContent.WidthAndHeight, ShowActivated = false, Left = -10000, Top = -10000 };
+        preview.Show(); preview.UpdateLayout();
+        try
+        {
+            var padding = (System.Windows.Controls.Border)layers.Children[1];
+            Check(card.Padding == new Thickness(0) && padding.Padding == originalPadding && padding.Child == content
+                && Math.Abs(light.ActualWidth - (card.ActualWidth - 2)) < 0.1
+                && Math.Abs(light.ActualHeight - (card.ActualHeight - 2)) < 0.1,
+                "card shimmer covers the full surface while retaining content padding");
+            Check(!light.IsHitTestVisible && light.CornerRadius == card.CornerRadius && card.Clip != null,
+                "card shimmer respects rounded corners and does not block actions");
+            WaitForAnimation(100);
+            var transform = (TranslateTransform)((LinearGradientBrush)light.Background).RelativeTransform;
+            double first = transform.X;
+            WaitForAnimation(180);
+            Check(transform.HasAnimatedProperties && transform.X > first, "card shimmer moves continuously");
+            light.Tag = false;
+            WaitForAnimation(80);
+            Check(light.Opacity == 0 && !((LinearGradientBrush)light.Background).RelativeTransform.HasAnimatedProperties,
+                "card shimmer stops when animations are disabled");
+        }
+        finally { preview.Close(); }
     }
 
     private static void CheckVisualEffects(MainWindow window)

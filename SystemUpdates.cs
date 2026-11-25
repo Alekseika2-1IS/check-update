@@ -133,7 +133,7 @@ namespace UpdateHub
             var actions = new WrapPanel();
             foreach (var button in buttons) actions.Children.Add(button);
             content.Children.Add(actions);
-            var card = Card(content, "#151E2E", new Thickness(14));
+            var card = Card(content, "#171C23", new Thickness(14));
             card.Margin = new Thickness(0, 0, 0, 12);
             return card;
         }

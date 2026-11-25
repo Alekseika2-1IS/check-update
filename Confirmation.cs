@@ -27,8 +27,8 @@ namespace UpdateHub
                 MinRowHeight = 36,
                 ColumnHeaderHeight = 36,
                 GridLinesVisibility = DataGridGridLinesVisibility.Horizontal,
-                HorizontalGridLinesBrush = Paint("#273449"),
-                Background = Paint("#151E2E"),
+                HorizontalGridLinesBrush = Paint("#29333E"),
+                Background = Paint("#171C23"),
                 BorderThickness = new Thickness(0),
                 MaxHeight = Math.Max(140, Math.Min(330, SystemParameters.WorkArea.Height - 300))
             };
@@ -36,7 +36,7 @@ namespace UpdateHub
             ScrollViewer.SetHorizontalScrollBarVisibility(list, ScrollBarVisibility.Disabled);
             System.Windows.Automation.AutomationProperties.SetName(list, "Программы для обновления");
             list.Columns.Add(ConfirmationColumn("ПРОГРАММА", "Name", 2.4, "#EDF4FC"));
-            list.Columns.Add(ConfirmationColumn("УСТАНОВЛЕНО", "Installed", 1, "#A0B0C6"));
+            list.Columns.Add(ConfirmationColumn("УСТАНОВЛЕНО", "Installed", 1, "#9CAABB"));
             list.Columns.Add(ConfirmationColumn("НОВАЯ ВЕРСИЯ", "Available", 1, "#89E9FC"));
             return BuildConfirmation("Подтверждение обновлений", "Обновить программы?", "Выбрано программ: " + chosen.Count,
                 RoundedContentCard(list), "Сохраните работу в выбранных программах. Установщики могут запросить права администратора. Нажимая «Обновить», вы принимаете лицензионные условия обновлений.",
@@ -80,7 +80,7 @@ namespace UpdateHub
         private static StackPanel ConfirmationVersion(string title, Version version, string color)
         {
             var panel = new StackPanel();
-            panel.Children.Add(Label(title, 12, "#A0B0C6"));
+            panel.Children.Add(Label(title, 12, "#9CAABB"));
             var number = Label(version.ToString(3), 23, color);
             number.Margin = new Thickness(0, 4, 0, 0);
             number.FontWeight = FontWeights.SemiBold;
@@ -113,7 +113,7 @@ namespace UpdateHub
             var headline = Label(heading, 24, "#F2F7FF");
             headline.FontWeight = FontWeights.SemiBold;
             body.Children.Add(headline);
-            var subtitle = Label(summary, 13, "#A0B0C6");
+            var subtitle = Label(summary, 13, "#9CAABB");
             subtitle.Margin = new Thickness(0, 6, 0, 16);
             body.Children.Add(subtitle);
             body.Children.Add(detail);
@@ -127,7 +127,7 @@ namespace UpdateHub
             var confirm = new Button
             {
                 Content = action, IsDefault = true, MinWidth = 116,
-                Background = Paint("#79DFF4"), BorderBrush = Paint("#79DFF4"), Foreground = Paint("#102332")
+                Background = Paint("#78D9ED"), BorderBrush = Paint("#78D9ED"), Foreground = Paint("#102332")
             };
             confirm.SetResourceReference(StyleProperty, "AnimatedButton");
             confirm.Click += (s, e) => dialog.DialogResult = true;

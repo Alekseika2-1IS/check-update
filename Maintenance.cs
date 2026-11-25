@@ -10,7 +10,7 @@ namespace UpdateHub
     {
         private readonly TextBlock maintenanceTitle = Label("Сеанс обслуживания", 15, "#EDF4FC");
         private readonly TextBlock maintenanceSummary = Label("", 13, "#D8E8F7");
-        private readonly TextBlock maintenanceSystem = Label("", 12, "#A0B0C6");
+        private readonly TextBlock maintenanceSystem = Label("", 12, "#9CAABB");
         private readonly Button maintenanceAction = new Button { MinWidth = 142, Padding = new Thickness(12, 8, 12, 8) };
         private readonly List<HistoryEntry> maintenanceAttempts = new List<HistoryEntry>();
         private bool scanningPrograms;
@@ -26,6 +26,8 @@ namespace UpdateHub
             maintenanceAction.Margin = new Thickness(14, 0, 0, 0);
             maintenanceAction.Background = Paint("#184858");
             maintenanceAction.BorderBrush = Paint("#2D7588");
+            maintenanceAction.FontSize = 11;
+            maintenanceAction.Style = (Style)FindResource("AnimatedButton");
             maintenanceAction.Click += async (s, e) =>
             {
                 if (busy || downloadingApp) return;
@@ -36,26 +38,35 @@ namespace UpdateHub
                     if (available.Count > 0) await InstallUpdatesAsync(available);
                 }
             };
-            DockPanel.SetDock(maintenanceAction, Dock.Right);
-            row.Children.Add(maintenanceAction);
+            var actions = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(20, 0, 0, 0) };
+            actions.Children.Add(update);
+            maintenanceAction.Margin = new Thickness(0, 8, 0, 0);
+            actions.Children.Add(maintenanceAction);
+            DockPanel.SetDock(actions, Dock.Right);
+            row.Children.Add(actions);
 
             var details = new StackPanel();
             maintenanceTitle.FontWeight = FontWeights.SemiBold;
+            maintenanceTitle.FontSize = 21;
             maintenanceSummary.Margin = new Thickness(0, 5, 0, 3);
             details.Children.Add(maintenanceTitle);
             details.Children.Add(maintenanceSummary);
             details.Children.Add(maintenanceSystem);
             row.Children.Add(details);
-            var card = Card(row, "#142638", new Thickness(15, 10, 15, 11));
-            card.BorderBrush = Paint("#2D5368");
+            var card = Card(row, "#142638", new Thickness(22, 20, 22, 20));
+            card.Background = new System.Windows.Media.LinearGradientBrush(
+                (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#203C49"),
+                (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#19232F"), 25);
+            card.BorderBrush = Paint("#3A5663");
+            card.CornerRadius = new CornerRadius(15);
             card.Margin = new Thickness(0, 0, 0, 14);
             RefreshMaintenance();
-            return card;
+            return IlluminateCard(card);
         }
 
         private void RefreshMaintenance()
         {
-            maintenanceTitle.Text = "Сеанс обслуживания";
+            maintenanceTitle.Text = "Всё начинается с проверки";
             maintenanceRecovery = null;
             string action = "";
             if (maintenanceQueueSize > 0)
@@ -73,7 +84,10 @@ namespace UpdateHub
                     action = maintenanceRecovery.CanRetry ? "Повторить обновление" : "Сверить версию";
             }
             else if (scanningPrograms)
+            {
+                maintenanceTitle.Text = "Ищем новые версии";
                 maintenanceSummary.Text = "Проверяем обновления программ…";
+            }
             else if (programScanFailed)
                 maintenanceSummary.Text = "Не удалось проверить программы. Повторите проверку.";
             else if (!programsScanned)
@@ -81,6 +95,7 @@ namespace UpdateHub
             else
             {
                 int available = packages.Count(p => p.CanSelect);
+                maintenanceTitle.Text = available == 0 ? "Программы проверены" : "Доступно обновлений: " + available;
                 maintenanceSummary.Text = available == 0 ? "Нет программ, готовых к обновлению." : "Программ к обновлению: " + available;
                 if (available > 0) action = "Обновить все программы";
             }
