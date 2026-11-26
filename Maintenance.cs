@@ -141,6 +141,7 @@ namespace UpdateHub
                 return "NVIDIA: доступен драйвер";
             if (nvidiaReport == null) return "NVIDIA: проверка не удалась";
             if (!nvidiaReport.HasAdapter) return "NVIDIA: видеокарта не найдена";
+            if (!nvidiaReport.CatalogRequested) return "NVIDIA: каталог не проверялся";
             return nvidiaReport.Complete ? "NVIDIA: драйвер актуален" : "NVIDIA: проверка неполная";
         }
     }

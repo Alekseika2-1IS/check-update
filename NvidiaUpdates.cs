@@ -19,6 +19,7 @@ namespace UpdateHub
         public bool HasAdapter;
         public bool HasUpdate;
         public bool Complete = true;
+        public bool CatalogRequested = true;
     }
 
     public static class NvidiaUpdates
@@ -152,7 +153,7 @@ namespace UpdateHub
             }
         }
 
-        public static async Task<NvidiaUpdateReport> ScanAsync()
+        public static async Task<NvidiaUpdateReport> ScanAsync(bool queryCatalog)
         {
             var adapters = new List<Adapter>();
             using (var search = new ManagementObjectSearcher("SELECT Name, PNPDeviceID, DriverVersion FROM Win32_VideoController"))
@@ -172,12 +173,19 @@ namespace UpdateHub
                     });
                 }
             }
-            var report = new NvidiaUpdateReport { HasAdapter = adapters.Count > 0 };
+            var report = new NvidiaUpdateReport { HasAdapter = adapters.Count > 0, CatalogRequested = queryCatalog };
             foreach (var adapter in adapters)
                 if (adapter.Installed != null) report.InstalledVersions.Add(adapter.Installed);
             if (!report.HasAdapter)
             {
                 report.Lines.Add("Видеокарта NVIDIA не обнаружена.");
+                return report;
+            }
+            if (!queryCatalog)
+            {
+                foreach (var adapter in adapters)
+                    report.Lines.Add(adapter.Name + (adapter.Installed == null ? "" : " · установлено " + DisplayVersion(adapter.Installed)));
+                report.Lines.Add("Для поиска драйверов онлайн нажмите «Проверить каталог NVIDIA».");
                 return report;
             }
 

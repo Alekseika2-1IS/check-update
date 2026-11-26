@@ -7,6 +7,7 @@ $compilerArguments = @('/nologo', '/target:winexe', '/optimize+', '/codepage:650
 $compilerArguments += '/win32icon:' + (Join-Path $PSScriptRoot 'assets\app.ico')
 $compilerArguments += '/resource:' + (Join-Path $PSScriptRoot 'assets\app.png') + ',CheckUpdate.Icon.png'
 $compilerArguments += '/resource:' + (Join-Path $PSScriptRoot 'Theme.xaml') + ',CheckUpdate.Theme.xaml'
+$compilerArguments += '/resource:' + (Join-Path $PSScriptRoot 'assets\release-public-key.xml') + ',CheckUpdate.ReleasePublicKey.xml'
 $fontResourcePath = Join-Path $outputDirectory 'Check Update.g.resources'
 $fontResources = [System.Resources.ResourceWriter]::new($fontResourcePath)
 try {

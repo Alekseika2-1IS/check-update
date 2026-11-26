@@ -9,6 +9,7 @@ using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace UpdateHub
@@ -38,6 +39,7 @@ namespace UpdateHub
     {
         public const string Repository = "Alekseika2-1IS/check-update";
         public const string AssetName = "Check-Update.exe";
+        private const int SignatureSize = 384;
         public static Version CurrentVersion { get { return typeof(SelfUpdate).Assembly.GetName().Version; } }
         private const long MaxDownload = 50 * 1024 * 1024;
 
@@ -48,12 +50,20 @@ namespace UpdateHub
             return new Version(value.Major, value.Minor, Math.Max(0, value.Build), Math.Max(0, value.Revision));
         }
 
-        public static bool IsTrustedAsset(string url)
+        public static bool IsTrustedAsset(string url, string tag, string name)
         {
             Uri uri;
-            return Uri.TryCreate(url, UriKind.Absolute, out uri) && uri.Scheme == "https" && uri.Host == "github.com"
+            return ParseVersion(tag) != null && Uri.TryCreate(url, UriKind.Absolute, out uri) && uri.Scheme == "https" && uri.Host == "github.com"
                 && uri.IsDefaultPort && String.IsNullOrEmpty(uri.UserInfo) && String.IsNullOrEmpty(uri.Query)
-                && String.IsNullOrEmpty(uri.Fragment) && uri.AbsolutePath.StartsWith("/" + Repository + "/releases/download/", StringComparison.Ordinal);
+                && String.IsNullOrEmpty(uri.Fragment)
+                && uri.AbsolutePath == "/" + Repository + "/releases/download/" + tag + "/" + name;
+        }
+
+        public static bool IsTrustedAssetRedirect(Uri uri)
+        {
+            return uri != null && uri.IsAbsoluteUri && uri.Scheme == "https" && uri.IsDefaultPort
+                && uri.Host == "release-assets.githubusercontent.com" && String.IsNullOrEmpty(uri.UserInfo)
+                && String.IsNullOrEmpty(uri.Fragment);
         }
 
         public static AppRelease ParseRelease(string json, Version current)
@@ -61,20 +71,28 @@ namespace UpdateHub
             AppRelease release;
             using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(json)))
                 release = (AppRelease)new DataContractJsonSerializer(typeof(AppRelease)).ReadObject(stream);
+            if (release == null) throw new InvalidDataException("Ответ GitHub не содержит выпуска.");
             var version = ParseVersion(release.Tag);
             if (release.Draft || release.Prerelease || version == null || version <= current) return null;
             var executable = release.Assets == null ? null : release.Assets.SingleOrDefault(a => a.Name == AssetName);
             var checksum = release.Assets == null ? null : release.Assets.SingleOrDefault(a => a.Name == AssetName + ".sha256");
-            if (executable == null || checksum == null || !IsTrustedAsset(executable.Url) || !IsTrustedAsset(checksum.Url)
-                || executable.Size <= 0 || executable.Size > MaxDownload || checksum.Size <= 0 || checksum.Size > 4096)
-                throw new InvalidDataException("В выпуске нет подходящего файла программы или контрольной суммы.");
+            var signature = release.Assets == null ? null : release.Assets.SingleOrDefault(a => a.Name == AssetName + ".sig");
+            if (executable == null || checksum == null || !IsTrustedAsset(executable.Url, release.Tag, AssetName)
+                || !IsTrustedAsset(checksum.Url, release.Tag, AssetName + ".sha256")
+                || executable.Size <= 0 || executable.Size > MaxDownload || checksum.Size <= 0 || checksum.Size > 4096
+                || signature == null || signature.Size != SignatureSize || !IsTrustedAsset(signature.Url, release.Tag, AssetName + ".sig"))
+                throw new InvalidDataException("У выпуска отсутствует файл программы, контрольная сумма или цифровая подпись.");
             return release;
         }
 
         private static HttpClient Client()
         {
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
-            var client = new HttpClient { Timeout = TimeSpan.FromSeconds(45) };
+            var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+            {
+                Timeout = TimeSpan.FromSeconds(45),
+                MaxResponseContentBufferSize = 1024 * 1024
+            };
             client.DefaultRequestHeaders.UserAgent.ParseAdd("CheckUpdate/" + CurrentVersion);
             return client;
         }
@@ -134,6 +152,28 @@ namespace UpdateHub
             return hash != null && System.Text.RegularExpressions.Regex.IsMatch(hash, "^[0-9a-fA-F]{64}$");
         }
 
+        public static byte[] SignaturePayload(string tag, string name, string hash)
+        {
+            var version = ParseVersion(tag);
+            if (version == null || tag != "v" + version.ToString(3) || !ValidHash(hash)
+                || (name != AssetName && name != "Check-Update-Setup.exe"))
+                throw new InvalidDataException("Недопустимые данные подписи выпуска.");
+            return Encoding.UTF8.GetBytes("Check Update release v1\n" + tag + "\n" + name + "\n" + hash.ToLowerInvariant() + "\n");
+        }
+
+        public static bool VerifyReleaseSignature(string tag, string name, string hash, byte[] signature)
+        {
+            if (signature == null || signature.Length != SignatureSize) return false;
+            using (var key = new RSACryptoServiceProvider(new CspParameters(24)))
+            using (var source = typeof(SelfUpdate).Assembly.GetManifestResourceStream("CheckUpdate.ReleasePublicKey.xml"))
+            using (var reader = new StreamReader(source))
+            {
+                key.PersistKeyInCsp = false;
+                key.FromXmlString(reader.ReadToEnd());
+                return key.VerifyData(SignaturePayload(tag, name, hash), CryptoConfig.MapNameToOID("SHA256"), signature);
+            }
+        }
+
         public static void SyncInstalledVersion(string executable)
         {
             // Portable copies must never modify the installed application's entry.
@@ -153,43 +193,93 @@ namespace UpdateHub
             catch (System.Security.SecurityException) { }
         }
 
-        public static async Task<string> DownloadAsync(AppRelease release, IProgress<int> progress)
+        public sealed class DownloadedUpdate
+        {
+            public string Path { get; private set; }
+            public string Hash { get; private set; }
+            public string Tag { get; private set; }
+            internal byte[] Signature { get; private set; }
+            internal DownloadedUpdate(string path, string hash, string tag, byte[] signature)
+            {
+                Path = path;
+                Hash = hash;
+                Tag = tag;
+                Signature = signature;
+            }
+        }
+
+        private static async Task DownloadAssetAsync(HttpClient client, ReleaseAsset asset, Stream output,
+            IProgress<int> progress, CancellationToken cancellation)
+        {
+            Uri url = new Uri(asset.Url);
+            for (int redirects = 0; redirects <= 3; redirects++)
+            {
+                using (var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellation))
+                {
+                    int code = (int)response.StatusCode;
+                    if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308)
+                    {
+                        var next = response.Headers.Location;
+                        if (!IsTrustedAssetRedirect(next)) throw new InvalidDataException("Неизвестный адрес перенаправления GitHub.");
+                        url = next;
+                        continue;
+                    }
+                    response.EnsureSuccessStatusCode();
+                    using (var input = await response.Content.ReadAsStreamAsync())
+                    {
+                        var buffer = new byte[81920];
+                        long total = 0;
+                        int read;
+                        while ((read = await input.ReadAsync(buffer, 0, buffer.Length, cancellation)) > 0)
+                        {
+                            total += read;
+                            if (total > asset.Size) throw new InvalidDataException("Размер файла отличается от указанного в выпуске.");
+                            await output.WriteAsync(buffer, 0, read, cancellation);
+                            if (progress != null) progress.Report((int)(total * 100 / asset.Size));
+                        }
+                        if (total != asset.Size) throw new InvalidDataException("Файл скачан не полностью.");
+                    }
+                    return;
+                }
+            }
+            throw new InvalidDataException("Слишком много перенаправлений при скачивании.");
+        }
+
+        public static async Task<DownloadedUpdate> DownloadAsync(AppRelease release, IProgress<int> progress)
         {
             var asset = release.Assets.Single(a => a.Name == AssetName);
             var checksum = release.Assets.Single(a => a.Name == AssetName + ".sha256");
-            if (!IsTrustedAsset(asset.Url) || !IsTrustedAsset(checksum.Url)) throw new InvalidDataException("Неизвестный источник обновления.");
+            var signatureAsset = release.Assets.Single(a => a.Name == AssetName + ".sig");
+            if (!IsTrustedAsset(asset.Url, release.Tag, AssetName)
+                || !IsTrustedAsset(checksum.Url, release.Tag, AssetName + ".sha256")
+                || asset.Size <= 0 || asset.Size > MaxDownload || checksum.Size <= 0 || checksum.Size > 4096
+                || signatureAsset.Size != SignatureSize || !IsTrustedAsset(signatureAsset.Url, release.Tag, AssetName + ".sig"))
+                throw new InvalidDataException("Файлы выпуска не прошли проверку источника или размера.");
             string directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CheckUpdate", "updates", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(directory);
             string path = Path.Combine(directory, AssetName);
             try
             {
                 using (var client = Client())
+                using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90)))
+                using (var hashBuffer = new MemoryStream())
+                using (var signatureBuffer = new MemoryStream())
                 {
-                    var checksumText = await client.GetStringAsync(checksum.Url);
+                    await DownloadAssetAsync(client, checksum, hashBuffer, null, deadline.Token);
+                    var checksumText = Encoding.UTF8.GetString(hashBuffer.ToArray()).TrimStart('\uFEFF');
                     string expected = checksumText.Trim().Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
                     if (!ValidHash(expected)) throw new InvalidDataException("Контрольная сумма обновления не распознана.");
-                    using (var response = await client.GetAsync(asset.Url, HttpCompletionOption.ResponseHeadersRead))
-                    {
-                        response.EnsureSuccessStatusCode();
-                        using (var input = await response.Content.ReadAsStreamAsync())
-                        using (var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true))
-                        {
-                            var buffer = new byte[81920]; long total = 0; int read;
-                            while ((read = await input.ReadAsync(buffer, 0, buffer.Length)) > 0)
-                            {
-                                total += read;
-                                if (total > MaxDownload || total > asset.Size) throw new InvalidDataException("Размер обновления отличается от ожидаемого.");
-                                await output.WriteAsync(buffer, 0, read);
-                                progress.Report((int)(total * 100 / asset.Size));
-                            }
-                            if (total != asset.Size) throw new InvalidDataException("Обновление скачано не полностью.");
-                        }
-                    }
+                    await DownloadAssetAsync(client, signatureAsset, signatureBuffer, null, deadline.Token);
+                    var signature = signatureBuffer.ToArray();
+                    if (!VerifyReleaseSignature(release.Tag, AssetName, expected, signature))
+                        throw new InvalidDataException("Подпись выпуска не подтверждена. Установка отменена.");
+                    using (var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true))
+                        await DownloadAssetAsync(client, asset, output, progress, deadline.Token);
                     if (!String.Equals(Hash(path), expected, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Проверка файла обновления не пройдена. Установка отменена.");
                     if (System.Reflection.AssemblyName.GetAssemblyName(path).Version != ParseVersion(release.Tag))
                         throw new InvalidDataException("Версия скачанного файла не совпадает с выпуском.");
+                    return new DownloadedUpdate(path, expected, release.Tag, signature);
                 }
-                return path;
             }
             catch { if (File.Exists(path)) File.Delete(path); throw; }
         }
@@ -211,13 +301,16 @@ namespace UpdateHub
             finally { if (File.Exists(stage)) File.Delete(stage); }
         }
 
-        public static void ScheduleInstall(string downloaded)
+        public static void ScheduleInstall(DownloadedUpdate downloaded)
         {
+            if (!String.Equals(Hash(downloaded.Path), downloaded.Hash, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Файл обновления изменился после скачивания.");
             string current = typeof(SelfUpdate).Assembly.Location;
-            string helper = Path.Combine(Path.GetDirectoryName(downloaded), "update-helper.exe");
+            string helper = Path.Combine(Path.GetDirectoryName(downloaded.Path), "update-helper.exe");
             File.Copy(current, helper, true);
             var info = new ProcessStartInfo(helper) { UseShellExecute = false, CreateNoWindow = true };
-            info.Arguments = "--apply-update " + Process.GetCurrentProcess().Id + " \"" + current + "\" \"" + downloaded + "\" " + Hash(downloaded);
+            info.Arguments = "--apply-update " + Process.GetCurrentProcess().Id + " \"" + current + "\" \"" + downloaded.Path
+                + "\" " + downloaded.Tag + " " + downloaded.Hash + " " + Convert.ToBase64String(downloaded.Signature);
             Process.Start(info);
         }
 
@@ -226,10 +319,18 @@ namespace UpdateHub
             if (args.Length == 0 || args[0] != "--apply-update") return false;
             try
             {
-                if (args.Length != 5) throw new ArgumentException("Некорректные параметры обновления.");
+                if (args.Length != 7) throw new ArgumentException("Некорректные параметры обновления.");
+                var next = ParseVersion(args[4]);
+                if (next == null || next <= CurrentVersion
+                    || !VerifyReleaseSignature(args[4], AssetName, args[5], Convert.FromBase64String(args[6]))
+                    || System.Reflection.AssemblyName.GetAssemblyName(args[3]).Version != next)
+                    throw new InvalidDataException("Не удалось подтвердить подпись или версию обновления.");
                 try { using (var parent = Process.GetProcessById(Int32.Parse(args[1]))) if (!parent.WaitForExit(60000)) throw new TimeoutException("Приложение ещё открыто. Закройте его и повторите обновление."); }
                 catch (ArgumentException) { }
-                ReplaceAndRestart(args[3], args[2], args[4], path => Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }));
+                var installed = System.Reflection.AssemblyName.GetAssemblyName(args[2]);
+                if (installed.Name != typeof(SelfUpdate).Assembly.GetName().Name || installed.Version != CurrentVersion)
+                    throw new InvalidDataException("Установленный файл Check Update изменился. Повторите проверку версии.");
+                ReplaceAndRestart(args[3], args[2], args[5], path => Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }));
             }
             catch (Exception ex)
             {

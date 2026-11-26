@@ -16,7 +16,7 @@ using System.Windows.Media.Imaging;
 
 [assembly: System.Reflection.AssemblyTitle("Check Update")]
 [assembly: System.Reflection.AssemblyProduct("Check Update")]
-[assembly: System.Reflection.AssemblyVersion("0.12.1.0")]
+[assembly: System.Reflection.AssemblyVersion("0.12.2.0")]
 
 namespace UpdateHub
 {
@@ -105,7 +105,11 @@ namespace UpdateHub
         }
         public static CommandResult Run(string arguments, int timeout)
         {
-            var info = new ProcessStartInfo("winget.exe", arguments) {
+            string winget = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Microsoft", "WindowsApps", "winget.exe");
+            if (!File.Exists(winget))
+                throw new FileNotFoundException("WinGet недоступен. Проверьте, что установлен App Installer и включён псевдоним winget.exe.");
+            var info = new ProcessStartInfo(winget, arguments) {
                 UseShellExecute = false, CreateNoWindow = true,
                 RedirectStandardOutput = true, RedirectStandardError = true,
                 StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
@@ -179,7 +183,7 @@ namespace UpdateHub
         private AppRelease availableRelease;
         private bool checkingVersion;
         private bool downloadingApp;
-        private string downloadedApp;
+        private SelfUpdate.DownloadedUpdate downloadedApp;
         private readonly string logFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UpdateHub", "activity.log");
 
         private const string SettingsKey = @"Software\CheckUpdate";
@@ -317,7 +321,13 @@ namespace UpdateHub
             if (downloadedApp != null && ShowWorkflowConfirmation(BuildRestartConfirmation(SelfUpdate.ParseVersion(availableRelease.Tag))))
             {
                 try { SelfUpdate.ScheduleInstall(downloadedApp); Application.Current.Shutdown(); }
-                catch (Exception ex) { Log(ex.ToString(), true); ShowError("Не удалось запустить обновление. " + ex.Message); }
+                catch (Exception ex)
+                {
+                    downloadedApp = null;
+                    ShowAppRelease(availableRelease);
+                    Log(ex.ToString(), true);
+                    ShowError("Не удалось запустить обновление. " + ex.Message);
+                }
             }
         }
 

@@ -82,6 +82,7 @@ namespace UpdateHub
     {
         private readonly DockPanel systemPage = new DockPanel { Margin = new Thickness(28, 26, 28, 22), Visibility = Visibility.Collapsed };
         private readonly Button systemScanButton = new Button { Content = "Проверить Windows и NVIDIA" };
+        private readonly Button nvidiaOnlineButton = new Button { Content = "Проверить каталог NVIDIA", Margin = new Thickness(0, 0, 8, 4) };
         private readonly TextBlock systemStatus = Label("Проверка ещё не запускалась.", 13, "#9CAFC7");
         private readonly StackPanel windowsResults = new StackPanel();
         private readonly StackPanel nvidiaResults = new StackPanel();
@@ -115,6 +116,9 @@ namespace UpdateHub
             nvidia.Children.Add(nvidiaCatalogResults);
             nvidia.Children.Add(nvidiaNotices);
             nvidia.Children.Add(nvidiaResults);
+            nvidia.Children.Add(Label("Запрос к NVIDIA передаёт идентификаторы модели и подсистемы видеокарты, сборку Windows и тип ПК. Он отправляется по кнопке «Проверить каталог NVIDIA».", 12, "#9CAFC7"));
+            ApplyButtonHelp(nvidiaOnlineButton, (string)nvidiaOnlineButton.Content);
+            nvidiaOnlineButton.Click += async (s, e) => await CheckNvidiaAsync(true);
             var openNvidia = new Button { Content = "Открыть NVIDIA App", Margin = new Thickness(0, 0, 8, 4) };
             ApplyButtonHelp(openNvidia, (string)openNvidia.Content);
             openNvidia.Click += (s, e) =>
@@ -122,9 +126,9 @@ namespace UpdateHub
                 try { Process.Start("explorer.exe", @"shell:AppsFolder\com.nvidia.nvapp"); }
                 catch (Exception ex) { Log("Открытие NVIDIA App: " + ex); ShowError("Не удалось открыть NVIDIA App. Можно перейти на сайт NVIDIA."); }
             };
-            content.Children.Add(SystemCard("Драйверы NVIDIA", nvidia, openNvidia,
+            content.Children.Add(SystemCard("Драйверы NVIDIA", nvidia, nvidiaOnlineButton, openNvidia,
                 SystemLink("Драйверы на сайте NVIDIA", "https://www.nvidia.com/ru-ru/drivers/")));
-            nvidiaCatalogResults.Children.Add(Label("Game Ready и Studio проверяются по каталогу NVIDIA.", 12, "#9CAFC7"));
+            nvidiaCatalogResults.Children.Add(Label("Установленную версию можно проверить локально. Список новых выпусков доступен в каталоге NVIDIA.", 12, "#9CAFC7"));
             var logResults = new StackPanel();
             var logStatus = Label("Короткий замер журнала NVIDIA. Для проверки фоновой записи закройте игру и оставьте компьютер без нагрузки.", 13, "#9CAFC7");
             logResults.Children.Add(logStatus);
@@ -177,7 +181,7 @@ namespace UpdateHub
             if (checkingSystem) return;
             checkingSystem = true;
             systemScanButton.IsEnabled = false;
-            try { await Task.WhenAll(CheckWindowsAsync(), CheckNvidiaAsync()); }
+            try { await Task.WhenAll(CheckWindowsAsync(), CheckNvidiaAsync(false)); }
             finally { systemScanButton.IsEnabled = true; checkingSystem = false; }
         }
 
@@ -214,17 +218,19 @@ namespace UpdateHub
             finally { checkingWindows = false; windowsChecked = true; RefreshMaintenance(); }
         }
 
-        private async Task CheckNvidiaAsync()
+        private async Task CheckNvidiaAsync(bool queryCatalog)
         {
+            if (checkingNvidia) return;
             checkingNvidia = true;
+            nvidiaOnlineButton.IsEnabled = false;
             nvidiaReport = null;
             RefreshMaintenance();
             nvidiaCatalogResults.Children.Clear();
             nvidiaNotices.Children.Clear();
-            nvidiaCatalogResults.Children.Add(Label("Проверяем каталог NVIDIA…", 13, "#9CAFC7"));
+            nvidiaCatalogResults.Children.Add(Label(queryCatalog ? "Проверяем каталог NVIDIA…" : "Проверяем установленный драйвер…", 13, "#9CAFC7"));
             try
             {
-                nvidiaReport = await Task.Run(() => NvidiaUpdates.ScanAsync());
+                nvidiaReport = await Task.Run(() => NvidiaUpdates.ScanAsync(queryCatalog));
                 ShowSystemResults(nvidiaCatalogResults, nvidiaReport.Lines, "");
                 foreach (var version in nvidiaReport.InstalledVersions)
                 {
@@ -240,7 +246,7 @@ namespace UpdateHub
                 nvidiaCatalogResults.Children.Clear();
                 nvidiaCatalogResults.Children.Add(Label("Не удалось проверить драйвер NVIDIA. Повторите проверку или откройте NVIDIA App.", 13, "#9CAFC7"));
             }
-            finally { checkingNvidia = false; nvidiaChecked = true; RefreshMaintenance(); }
+            finally { checkingNvidia = false; nvidiaChecked = true; nvidiaOnlineButton.IsEnabled = true; RefreshMaintenance(); }
         }
 
         private static void ShowSystemResults(StackPanel panel, List<string> titles, string emptyMessage)

@@ -110,9 +110,28 @@ public static class Tests
         }, milliseconds => Task.FromResult(0)).GetAwaiter().GetResult();
         Check(scans == 2 && verified.Error == null && verified.Pending == 0, "temporary scan failure recovers");
         Check(SelfUpdate.ParseVersion("v1.2.3") == new Version(1, 2, 3, 0) && SelfUpdate.ParseVersion("v1.2.3-beta") == null, "stable release version parsing");
-        Check(!SelfUpdate.IsTrustedAsset("https://github.com/other/app/releases/download/v1/a.exe") && !SelfUpdate.IsTrustedAsset("http://github.com/" + SelfUpdate.Repository + "/releases/download/v1/a.exe"), "foreign update sources rejected");
+        Check(!SelfUpdate.IsTrustedAsset("https://github.com/other/app/releases/download/v9.0.0/Check-Update.exe", "v9.0.0", SelfUpdate.AssetName)
+            && !SelfUpdate.IsTrustedAsset("http://github.com/" + SelfUpdate.Repository + "/releases/download/v9.0.0/Check-Update.exe", "v9.0.0", SelfUpdate.AssetName),
+            "foreign update sources rejected");
+        Check(SelfUpdate.IsTrustedAssetRedirect(new Uri("https://release-assets.githubusercontent.com/file?signature=example"))
+            && !SelfUpdate.IsTrustedAssetRedirect(new Uri("https://example.org/file"))
+            && !SelfUpdate.IsTrustedAssetRedirect(new Uri("http://release-assets.githubusercontent.com/file")),
+            "release redirects stay on the HTTPS GitHub asset host");
         string releaseJson = "{\"tag_name\":\"v9.0.0\",\"draft\":false,\"prerelease\":false,\"assets\":[{\"name\":\"Check-Update.exe\",\"size\":100,\"browser_download_url\":\"https://github.com/" + SelfUpdate.Repository + "/releases/download/v9.0.0/Check-Update.exe\"},{\"name\":\"Check-Update.exe.sha256\",\"size\":64,\"browser_download_url\":\"https://github.com/" + SelfUpdate.Repository + "/releases/download/v9.0.0/Check-Update.exe.sha256\"}]}";
+        rejected = false;
+        try { SelfUpdate.ParseRelease(releaseJson, new Version(1, 0, 0, 0)); }
+        catch (InvalidDataException) { rejected = true; }
+        Check(rejected, "a newer unsigned release is refused");
+        releaseJson = releaseJson.Insert(releaseJson.LastIndexOf(']'),
+            ",{\"name\":\"Check-Update.exe.sig\",\"size\":384,\"browser_download_url\":\"https://github.com/"
+            + SelfUpdate.Repository + "/releases/download/v9.0.0/Check-Update.exe.sig\"}");
         Check(SelfUpdate.ParseRelease(releaseJson, new Version(1, 0, 0, 0)) != null, "new release with expected assets detected");
+        Check(!SelfUpdate.VerifyReleaseSignature("v9.0.0", SelfUpdate.AssetName, new string('0', 64), new byte[384]),
+            "an invalid release signature is refused");
+        rejected = false;
+        try { SelfUpdate.ParseRelease(releaseJson.Replace("/v9.0.0/", "/v8.0.0/"), new Version(1, 0, 0, 0)); }
+        catch (InvalidDataException) { rejected = true; }
+        Check(rejected, "release asset paths must match the exact release tag");
         Check(SelfUpdate.ParseRelease(releaseJson, new Version(9, 0, 0, 0)) == null && SelfUpdate.ParseRelease(releaseJson.Replace("\"prerelease\":false", "\"prerelease\":true"), new Version(1, 0)) == null, "current versions and previews ignored");
         rejected = false; try { SelfUpdate.ParseRelease(releaseJson.Replace("Check-Update.exe.sha256", "wrong.txt"), new Version(1, 0)); } catch (InvalidDataException) { rejected = true; }
         Check(rejected, "release missing checksum rejected");
