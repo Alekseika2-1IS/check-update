@@ -312,6 +312,7 @@ namespace UpdateHub
             scanOnStartup.ToolTip = "При открытии Check Update загрузится список доступных обновлений программ.";
             scanOnStartup.Click += (s, e) => SaveScanOnStartup();
             navigation.Children.Add(scanOnStartup);
+            navigation.Children.Add(BuildWorkflowControls(() => showPrograms(true)));
             sidebar.Children.Add(navigation);
 
             var heading = new DockPanel { Margin = new Thickness(0, 0, 0, 20) };

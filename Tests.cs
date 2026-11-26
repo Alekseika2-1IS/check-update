@@ -28,6 +28,7 @@ public static class Tests
     [STAThread]
     public static void Main(string[] args)
     {
+        CheckProgramTransferAndSchedule();
         CheckRateLimitResponse();
         CheckShortcutIcon();
         Check(NvidiaUpdates.InstalledVersion("32.0.16.2124") == new Version(621, 24)
@@ -602,6 +603,30 @@ public static class Tests
                 "card shimmer stops when animations are disabled");
         }
         finally { preview.Close(); }
+    }
+
+    private static void CheckProgramTransferAndSchedule()
+    {
+        using (var file = new MemoryStream())
+        {
+            ProgramList.Write(file, new[] { new Package { Id = "Vendor.First" }, new Package { Id = "vendor.first" }, new Package { Id = "Vendor.Second" } });
+            file.Position = 0;
+            var missing = ProgramList.Missing(ProgramList.Read(file), new[] { new Package { Id = "VENDOR.FIRST" } });
+            Check(missing.SequenceEqual(new[] { "Vendor.Second" }), "program list survives export and excludes already installed IDs on import");
+        }
+        bool rejected = false;
+        using (var file = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"Format\":1,\"Programs\":[\"Vendor.App --all\"]}")))
+        {
+            try { ProgramList.Read(file); }
+            catch (ArgumentException) { rejected = true; }
+        }
+        Check(rejected, "program list rejects identifiers containing command arguments");
+        var due = typeof(MainWindow).GetMethod("IsScheduleDue", BindingFlags.Static | BindingFlags.NonPublic);
+        var now = new DateTime(2026, 11, 26, 19, 5, 0);
+        Func<string, string, bool> shouldRun = (time, day) => (bool)due.Invoke(null, new object[] { now, time, day });
+        Check(shouldRun("19:00", "2026-11-25") && !shouldRun("19:00", "2026-11-26")
+            && !shouldRun("19:06", null) && !shouldRun(null, null),
+            "daily schedule catches up after the selected time and runs at most once that day");
     }
 
     private static void CheckVisualEffects(MainWindow window)

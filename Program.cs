@@ -16,7 +16,7 @@ using System.Windows.Media.Imaging;
 
 [assembly: System.Reflection.AssemblyTitle("Check Update")]
 [assembly: System.Reflection.AssemblyProduct("Check Update")]
-[assembly: System.Reflection.AssemblyVersion("0.11.2.0")]
+[assembly: System.Reflection.AssemblyVersion("0.12.0.0")]
 
 namespace UpdateHub
 {
@@ -205,6 +205,7 @@ namespace UpdateHub
             Loaded -= RunStartupChecks;
             Task programsCheck = scanOnStartup.IsChecked == true ? ScanAsync() : Task.FromResult(0);
             await Task.WhenAll(programsCheck, CheckAppVersionAsync());
+            if (IsLoaded) StartUpdateSchedule();
         }
 
         private bool LoadScanOnStartup()
@@ -313,7 +314,7 @@ namespace UpdateHub
             }
             catch (Exception ex) { Log("Скачивание приложения: " + ex, true); appVersionStatus.Text = "Скачать не удалось — повторите позже"; ShowError(ex.Message); }
             finally { downloadingApp = false; SetBusy(false); }
-            if (downloadedApp != null && BuildRestartConfirmation(SelfUpdate.ParseVersion(availableRelease.Tag)).ShowDialog() == true)
+            if (downloadedApp != null && ShowWorkflowConfirmation(BuildRestartConfirmation(SelfUpdate.ParseVersion(availableRelease.Tag))))
             {
                 try { SelfUpdate.ScheduleInstall(downloadedApp); Application.Current.Shutdown(); }
                 catch (Exception ex) { Log(ex.ToString(), true); ShowError("Не удалось запустить обновление. " + ex.Message); }
@@ -434,9 +435,9 @@ namespace UpdateHub
             await InstallUpdatesAsync(chosen);
         }
 
-        private async Task InstallUpdatesAsync(List<Package> chosen, bool continueSession = false)
+        private async Task InstallUpdatesAsync(List<Package> chosen, bool continueSession = false, bool scheduled = false)
         {
-            if (BuildProgramConfirmation(chosen).ShowDialog() != true) return;
+            if (!scheduled && !ShowWorkflowConfirmation(BuildProgramConfirmation(chosen))) return;
             if (!continueSession) maintenanceAttempts.Clear();
             maintenanceQueueSize = chosen.Count;
             installing = true; SetBusy(true); int succeeded = 0; int failed = 0;
@@ -454,7 +455,8 @@ namespace UpdateHub
                     ShowProgress(String.Format("Программа {0} из {1}: {2} — установка…", succeeded + failed + 1, chosen.Count, p.Name), succeeded + failed, chosen.Count, false);
                     try
                     {
-                        var result = await Task.Run(() => Winget.Run("upgrade --id " + Winget.Quote(p.Id) + " --exact --source winget --interactive --accept-package-agreements --disable-interactivity", -1));
+                        string mode = scheduled ? " --silent" : " --interactive";
+                        var result = await Task.Run(() => Winget.Run("upgrade --id " + Winget.Quote(p.Id) + " --exact --source winget" + mode + " --accept-package-agreements --disable-interactivity", -1));
                         bool ok = Winget.UpgradeNeedsVerification(result.Code);
                         Log("Обновление " + p.Id + ": " + result.Code + "\n" + result.Output + "\n" + result.Error, !ok);
                         if (ok)

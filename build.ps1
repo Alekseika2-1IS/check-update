@@ -18,6 +18,7 @@ $compilerArguments += Join-Path $PSScriptRoot 'Journal.cs'
 $compilerArguments += Join-Path $PSScriptRoot 'SystemUpdates.cs'
 $compilerArguments += Join-Path $PSScriptRoot 'NvidiaUpdates.cs'
 $compilerArguments += Join-Path $PSScriptRoot 'PackageIcons.cs'
+$compilerArguments += Join-Path $PSScriptRoot 'Workflows.cs'
 & (Join-Path $framework 'csc.exe') @compilerArguments
 if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 Write-Output (Join-Path $outputDirectory 'Check Update.exe')
