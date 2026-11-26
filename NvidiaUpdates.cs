@@ -15,6 +15,7 @@ namespace UpdateHub
     public sealed class NvidiaUpdateReport
     {
         public readonly List<string> Lines = new List<string>();
+        public readonly HashSet<Version> InstalledVersions = new HashSet<Version>();
         public bool HasAdapter;
         public bool HasUpdate;
         public bool Complete = true;
@@ -22,6 +23,45 @@ namespace UpdateHub
 
     public static class NvidiaUpdates
     {
+        public const string LoggingFixUrl = "https://www.nvidia.com/en-us/drivers/details/288689/";
+
+        public static string LoggingNotice(Version installed)
+        {
+            if (installed == new Version(621, 24))
+                return "621.24: возможна избыточная запись в журнал NVIDIA. NVIDIA указала исправление в 621.40.";
+            if (installed == new Version(621, 40))
+                return "621.40: NVIDIA указала исправление избыточной фоновой записи в журнал.";
+            return null;
+        }
+
+        public static async Task<string> CheckLogWritesAsync()
+        {
+            string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "NVIDIA Corporation", "nvtopps", "nct", "nvlog.nvlgstg");
+            var previous = ReadLogStamp(path);
+            bool found = previous != null;
+            int changes = 0;
+            for (int sample = 0; sample < 6; sample++)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+                var current = ReadLogStamp(path);
+                if (!Equals(previous, current)) changes++;
+                found |= current != null;
+                previous = current;
+            }
+            if (!found) return "За 30 секунд журнал NVIDIA не появился.";
+            if (changes == 0) return "За 30 секунд размер и время изменения журнала остались прежними.";
+            return "За 30 секунд журнал изменился в " + changes + " из 6 интервалов. Этот замер показывает активность журнала. Объём записи на SSD по нему определить нельзя.";
+        }
+
+        private static Tuple<long, DateTime, DateTime> ReadLogStamp(string path)
+        {
+            var file = new FileInfo(path);
+            try { return Tuple.Create(file.Length, file.LastWriteTimeUtc, file.CreationTimeUtc); }
+            catch (FileNotFoundException) { return null; }
+            catch (DirectoryNotFoundException) { return null; }
+        }
+
         private const string Catalog = "https://gfwsl.geforce.com/nvidia_web_services/controller.gfeclientcontent.NG.php/com.nvidia.services.GFEClientContent_NG.getDispDrvrByDevid/";
         private static readonly Regex HardwareId = new Regex(@"^PCI\\VEN_10DE&DEV_([0-9A-F]{4})&SUBSYS_([0-9A-F]{4})([0-9A-F]{4})(?:&|\\|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         private static readonly HttpClient Client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
@@ -133,6 +173,8 @@ namespace UpdateHub
                 }
             }
             var report = new NvidiaUpdateReport { HasAdapter = adapters.Count > 0 };
+            foreach (var adapter in adapters)
+                if (adapter.Installed != null) report.InstalledVersions.Add(adapter.Installed);
             if (!report.HasAdapter)
             {
                 report.Lines.Add("Видеокарта NVIDIA не обнаружена.");

@@ -86,6 +86,7 @@ namespace UpdateHub
         private readonly StackPanel windowsResults = new StackPanel();
         private readonly StackPanel nvidiaResults = new StackPanel();
         private readonly StackPanel nvidiaCatalogResults = new StackPanel();
+        private readonly StackPanel nvidiaNotices = new StackPanel();
         private bool checkingSystem;
         private bool checkingWindows;
         private bool checkingNvidia;
@@ -111,6 +112,7 @@ namespace UpdateHub
                 SystemLink("Открыть Windows Update", "ms-settings:windowsupdate")));
             var nvidia = new StackPanel();
             nvidia.Children.Add(nvidiaCatalogResults);
+            nvidia.Children.Add(nvidiaNotices);
             nvidia.Children.Add(nvidiaResults);
             var openNvidia = new Button { Content = "Открыть NVIDIA App", Margin = new Thickness(0, 0, 8, 4) };
             openNvidia.Click += (s, e) =>
@@ -121,6 +123,23 @@ namespace UpdateHub
             content.Children.Add(SystemCard("Драйверы NVIDIA", nvidia, openNvidia,
                 SystemLink("Драйверы на сайте NVIDIA", "https://www.nvidia.com/ru-ru/drivers/")));
             nvidiaCatalogResults.Children.Add(Label("Game Ready и Studio проверяются по каталогу NVIDIA.", 12, "#9CAFC7"));
+            var logResults = new StackPanel();
+            var logStatus = Label("Короткий замер журнала NVIDIA. Для проверки фоновой записи закройте игру и оставьте компьютер без нагрузки.", 13, "#9CAFC7");
+            logResults.Children.Add(logStatus);
+            var checkLog = new Button { Content = "Проверить запись журнала" };
+            checkLog.Click += async (s, e) =>
+            {
+                checkLog.IsEnabled = false;
+                logStatus.Text = "Наблюдаем за журналом NVIDIA 30 секунд…";
+                try { logStatus.Text = await Task.Run(() => NvidiaUpdates.CheckLogWritesAsync()); }
+                catch (Exception ex)
+                {
+                    Log("Проверка журнала NVIDIA: " + ex, true);
+                    logStatus.Text = "Не удалось прочитать журнал NVIDIA. Подробности в журнале Check Update.";
+                }
+                finally { checkLog.IsEnabled = true; }
+            };
+            content.Children.Add(SystemCard("Запись журнала NVIDIA", logResults, checkLog));
             systemPage.Children.Add(new ScrollViewer { Content = content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
         }
 
@@ -197,11 +216,19 @@ namespace UpdateHub
             nvidiaReport = null;
             RefreshMaintenance();
             nvidiaCatalogResults.Children.Clear();
+            nvidiaNotices.Children.Clear();
             nvidiaCatalogResults.Children.Add(Label("Проверяем каталог NVIDIA…", 13, "#9CAFC7"));
             try
             {
                 nvidiaReport = await Task.Run(() => NvidiaUpdates.ScanAsync());
                 ShowSystemResults(nvidiaCatalogResults, nvidiaReport.Lines, "");
+                foreach (var version in nvidiaReport.InstalledVersions)
+                {
+                    string notice = NvidiaUpdates.LoggingNotice(version);
+                    if (notice != null) nvidiaNotices.Children.Add(Label(notice, 13, "#EBD3A0"));
+                }
+                if (nvidiaNotices.Children.Count > 0)
+                    nvidiaNotices.Children.Add(SystemLink("Список исправлений NVIDIA", NvidiaUpdates.LoggingFixUrl));
             }
             catch (Exception ex)
             {

@@ -33,6 +33,10 @@ public static class Tests
         Check(NvidiaUpdates.InstalledVersion("32.0.16.2124") == new Version(621, 24)
             && NvidiaUpdates.InstalledVersion("32.0.15.6094") == new Version(560, 94)
             && NvidiaUpdates.InstalledVersion("32.0") == null, "NVIDIA Windows driver versions convert to catalog versions");
+        Check(NvidiaUpdates.LoggingNotice(NvidiaUpdates.InstalledVersion("32.0.16.2124")).Contains("возможна")
+            && NvidiaUpdates.LoggingNotice(NvidiaUpdates.InstalledVersion("32.0.16.2140")).Contains("исправление")
+            && NvidiaUpdates.LoggingNotice(new Version(621, 41)) == null && NvidiaUpdates.LoggingNotice(null) == null,
+            "NVIDIA logging notices apply only to the specifically documented versions");
         string hardware = "2486_10DE_87C6_1043";
         string offer = "{\"criteria\":{\"IsSupported\":{\"state\":\"true\",\"DeviceID\":\"2486\",\"Vendor\":\"10DE\",\"SubSystemID\":\"87C6\",\"SubVendorID\":\"1043\"}},\"DriverAttributes\":{\"Version\":\"621.24\",\"IsCRD\":1,\"IsBeta\":0,\"IsDC\":1}}";
         Check(NvidiaUpdates.ReadOffer(offer, hardware, true) == new Version(621, 24)
