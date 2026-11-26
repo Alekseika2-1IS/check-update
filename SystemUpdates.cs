@@ -100,6 +100,7 @@ namespace UpdateHub
             var header = new StackPanel { Margin = new Thickness(0, 0, 0, 18) };
             header.Children.Add(Label("Windows и NVIDIA", 27, "#F2F7FF"));
             systemScanButton.HorizontalAlignment = HorizontalAlignment.Left;
+            ApplyButtonHelp(systemScanButton, (string)systemScanButton.Content);
             systemScanButton.Margin = new Thickness(0, 10, 0, 8);
             systemScanButton.Click += async (s, e) => await CheckSystemUpdatesAsync();
             header.Children.Add(systemScanButton);
@@ -115,6 +116,7 @@ namespace UpdateHub
             nvidia.Children.Add(nvidiaNotices);
             nvidia.Children.Add(nvidiaResults);
             var openNvidia = new Button { Content = "Открыть NVIDIA App", Margin = new Thickness(0, 0, 8, 4) };
+            ApplyButtonHelp(openNvidia, (string)openNvidia.Content);
             openNvidia.Click += (s, e) =>
             {
                 try { Process.Start("explorer.exe", @"shell:AppsFolder\com.nvidia.nvapp"); }
@@ -127,6 +129,7 @@ namespace UpdateHub
             var logStatus = Label("Короткий замер журнала NVIDIA. Для проверки фоновой записи закройте игру и оставьте компьютер без нагрузки.", 13, "#9CAFC7");
             logResults.Children.Add(logStatus);
             var checkLog = new Button { Content = "Проверить запись журнала" };
+            ApplyButtonHelp(checkLog, (string)checkLog.Content);
             checkLog.Click += async (s, e) =>
             {
                 checkLog.IsEnabled = false;
@@ -160,6 +163,7 @@ namespace UpdateHub
         private Button SystemLink(string label, string destination)
         {
             var button = new Button { Content = label, Margin = new Thickness(0, 0, 8, 4) };
+            ApplyButtonHelp(button, label);
             button.Click += (s, e) =>
             {
                 try { Process.Start(new ProcessStartInfo(destination) { UseShellExecute = true }); }

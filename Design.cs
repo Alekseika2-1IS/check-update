@@ -143,6 +143,7 @@ namespace UpdateHub
         private static void SetButtonLabel(Button button, string title, string outline = null, double size = 18, double spacing = 7)
         {
             System.Windows.Automation.AutomationProperties.SetName(button, title);
+            ApplyButtonHelp(button, title);
             if (outline == null)
             {
                 button.Content = title;
@@ -210,7 +211,8 @@ namespace UpdateHub
             using (var stream = typeof(MainWindow).Assembly.GetManifestResourceStream("CheckUpdate.Theme.xaml"))
                 Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Load(stream));
             Background = Paint("#101317"); Foreground = Paint("#EDF4FC");
-            FontFamily = new FontFamily("Segoe UI"); FontSize = 13;
+            var fontBase = new Uri("pack://application:,,,/Check%20Update;component/", UriKind.Absolute);
+            FontFamily = new FontFamily(fontBase, "./fonts/#Manrope, Segoe UI"); FontSize = 13;
             SourceInitialized += (s, e) => UseDarkTitleBar(this);
 
             var shell = new Grid { Background = Background }; shell.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(218) }); shell.ColumnDefinitions.Add(new ColumnDefinition()); Content = shell;
@@ -230,8 +232,13 @@ namespace UpdateHub
             var appCardContent = new StackPanel();
             var version = Label("Версия " + SelfUpdate.CurrentVersion.ToString(3), 15, "#EDF4FC");
             version.FontWeight = FontWeights.SemiBold;
-            version.Margin = new Thickness(0, 0, 0, 8);
-            appCardContent.Children.Add(version);
+            version.VerticalAlignment = VerticalAlignment.Center;
+            var versionHeader = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+            var help = CreateHelpButton();
+            DockPanel.SetDock(help, Dock.Right);
+            versionHeader.Children.Add(help);
+            versionHeader.Children.Add(version);
+            appCardContent.Children.Add(versionHeader);
             appVersionStatus.Text = "Обновления приложения через GitHub"; appVersionStatus.TextWrapping = TextWrapping.Wrap; appVersionStatus.FontSize = 12; appVersionStatus.Foreground = Paint("#9CAABB"); appVersionStatus.Margin = new Thickness(0, 0, 0, 12);
             appCardContent.Children.Add(appVersionStatus);
             SetButtonLabel(appUpdate, "Проверить версию"); appUpdate.Padding = new Thickness(8, 10, 8, 10); appUpdate.FontSize = 12;
@@ -309,7 +316,7 @@ namespace UpdateHub
             navigation.Children.Add(settingsLabel);
             scanOnStartup.Content = Label("Проверять обновления\nпри запуске", 11, "#9CAABB");
             scanOnStartup.IsChecked = LoadScanOnStartup();
-            scanOnStartup.ToolTip = "При открытии Check Update загрузится список доступных обновлений программ.";
+            ApplyButtonHelp(scanOnStartup, "Проверять обновления при запуске");
             scanOnStartup.Click += (s, e) => SaveScanOnStartup();
             navigation.Children.Add(scanOnStartup);
             navigation.Children.Add(BuildWorkflowControls(() => showPrograms(true)));
@@ -345,6 +352,8 @@ namespace UpdateHub
             update.Style = (Style)FindResource("AnimatedButton");
             update.Click += async (s, e) => await UpdateAsync();
             var clearSearch = new Button { Content = "×", FontSize = 19, Padding = new Thickness(12, 5, 12, 5), Margin = new Thickness(7, 0, 0, 0), ToolTip = "Очистить поиск" };
+            System.Windows.Automation.AutomationProperties.SetName(clearSearch, "Очистить поиск");
+            ApplyButtonHelp(clearSearch, "Очистить поиск");
             clearSearch.Click += (s, e) => { search.Clear(); search.Focus(); }; DockPanel.SetDock(clearSearch, Dock.Right); searchRow.Children.Add(clearSearch);
             search.ToolTip = "Поиск по названию программы или идентификатору";
             search.TextChanged += (s, e) => RefreshView();
@@ -354,16 +363,18 @@ namespace UpdateHub
             DockPanel.SetDock(summary, Dock.Right); filters.Children.Add(summary);
             var options = new StackPanel { Orientation = Orientation.Horizontal };
             onlyUpdates.Content = "С обновлениями"; onlyUpdates.IsChecked = true;
+            ApplyButtonHelp(onlyUpdates, (string)onlyUpdates.Content);
             onlyUpdates.Checked += (s, e) => refreshNavigation();
             onlyUpdates.Unchecked += (s, e) => refreshNavigation();
             onlyUpdates.Click += (s, e) => RefreshView(); options.Children.Add(onlyUpdates);
             selectAll.Content = "Выбрать показанные"; selectAll.Margin = new Thickness(20, 0, 0, 0);
+            ApplyButtonHelp(selectAll, (string)selectAll.Content);
             selectAll.Click += (s, e) => { foreach (var p in packages.Where(MatchesFilter)) p.Selected = p.CanSelect && selectAll.IsChecked == true; };
             options.Children.Add(selectAll);
             skipVersion.Margin = new Thickness(16, 0, 0, 0);
             skipVersion.Padding = new Thickness(10, 5, 10, 5);
             skipVersion.FontSize = 11;
-            skipVersion.ToolTip = "Щёлкните по строке программы, чтобы пропустить эту версию или вернуть её в список.";
+            ApplyButtonHelp(skipVersion, (string)skipVersion.Content);
             skipVersion.Click += (s, e) => ToggleSkippedVersion();
             options.Children.Add(skipVersion);
             filters.Children.Add(options); actions.Children.Add(filters);
@@ -371,6 +382,7 @@ namespace UpdateHub
 
             var footer = new DockPanel { Margin = new Thickness(0, 16, 0, 0) };
             var logButton = new Button { Content = "Журнал", Padding = new Thickness(12, 8, 12, 8), VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(18, 0, 0, 0), FontSize = 12 };
+            ApplyButtonHelp(logButton, (string)logButton.Content);
             logButton.Click += async (s, e) => await showJournal();
             DockPanel.SetDock(logButton, Dock.Right); footer.Children.Add(logButton);
             var activity = new StackPanel();
@@ -497,6 +509,7 @@ namespace UpdateHub
             var package = table.SelectedItem as Package;
             skipVersion.IsEnabled = !busy && !downloadingApp && package != null && package.CanUpdate;
             skipVersion.Content = package != null && package.Skipped ? "Вернуть обновление" : "Пропустить версию";
+            ApplyButtonHelp(skipVersion, (string)skipVersion.Content);
         }
 
         private void ToggleSkippedVersion()
@@ -616,6 +629,7 @@ namespace UpdateHub
         {
             button.Visibility = attempt != null && (attempt.CanRetry || attempt.CanRecheck) ? Visibility.Visible : Visibility.Collapsed;
             button.Content = attempt != null && attempt.CanRecheck ? "Сверить версию" : "Повторить обновление";
+            ApplyButtonHelp(button, (string)button.Content);
             button.IsEnabled = !busy && !downloadingApp;
         }
 

@@ -120,6 +120,9 @@ namespace UpdateHub
             journalPage.Children.Add(header);
 
             var toolbar = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
+            ApplyButtonHelp(journalRefresh, "Обновить журнал");
+            ApplyButtonHelp(journalCopy, "Копировать записи");
+            ApplyButtonHelp(journalErrorsOnly, "Только ошибки");
             journalCopy.Margin = new Thickness(8, 0, 0, 0);
             journalRefresh.Margin = new Thickness(14, 0, 0, 0);
             journalErrorsOnly.Margin = new Thickness(14, 0, 0, 0);

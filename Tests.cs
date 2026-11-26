@@ -147,6 +147,7 @@ public static class Tests
         }
         System.Threading.SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(window.Dispatcher));
         window.Show();
+        CheckInterfaceFont(window);
         Capture(window, "preview-empty.png");
         if (!offline)
         {
@@ -333,6 +334,17 @@ public static class Tests
         }
     }
 
+    private static void CheckInterfaceFont(MainWindow window)
+    {
+        var faces = window.FontFamily.GetTypefaces().ToList();
+        var regular = faces.First(t => t.Weight == FontWeights.Normal);
+        GlyphTypeface glyphs;
+        Check(regular.TryGetGlyphTypeface(out glyphs) && glyphs.FamilyNames.Values.Any(name => name == "Manrope")
+            && "Обновления Ёё".Where(c => !Char.IsWhiteSpace(c)).All(c => glyphs.CharacterToGlyphMap.ContainsKey(c))
+            && faces.Any(t => t.Weight == FontWeights.SemiBold) && faces.Any(t => t.Weight == FontWeights.Bold),
+            "embedded Manrope covers Russian text and includes heading weights");
+    }
+
     private static void CheckConfirmations(MainWindow owner)
     {
         var flags = BindingFlags.Instance | BindingFlags.NonPublic;
@@ -370,6 +382,17 @@ public static class Tests
                 && actions.IsVisible, "long program queue scrolls to the last entry with actions still visible");
         }), "program confirmation cancels without accepting the queue");
 
+        var help = (Window)typeof(MainWindow).GetMethod("BuildButtonHelp", flags).Invoke(owner, null);
+        Check(!ExerciseConfirmation(help, false, (body, actions) =>
+        {
+            var scroll = (System.Windows.Controls.ScrollViewer)body.Children[2];
+            var entries = (System.Windows.Controls.StackPanel)scroll.Content;
+            Check(scroll.ScrollableHeight > 0 && actions.Children.Count == 1 && actions.IsVisible
+                && entries.Children.OfType<System.Windows.Controls.TextBlock>().Any(entry => entry.Text == "Перенести программы"),
+                "button reference covers transfer and scrolls with a visible close action");
+            Capture(help, "preview-button-help.png");
+        }), "button reference closes without confirming any action");
+
         var restart = (Window)typeof(MainWindow).GetMethod("BuildRestartConfirmation", flags).Invoke(owner, new object[] { new Version(0, 10, 2, 0) });
         Check(ExerciseConfirmation(restart, true, (body, actions) =>
         {
@@ -393,7 +416,7 @@ public static class Tests
             try
             {
                 var body = (System.Windows.Controls.StackPanel)((System.Windows.Controls.Border)dialog.Content).Child;
-                var actions = (System.Windows.Controls.StackPanel)body.Children[4];
+                var actions = (System.Windows.Controls.StackPanel)body.Children[body.Children.Count - 1];
                 inspect(body, actions);
                 var button = (System.Windows.Controls.Button)actions.Children[confirm ? 1 : 0];
                 button.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
@@ -489,6 +512,8 @@ public static class Tests
         Check(UpdateIcon(scan) != UpdateIcon(download)
             && System.Windows.Automation.AutomationProperties.GetName(download) == "Скачать обновление",
             "scan and download have distinct vector icons and an accessible download name");
+        Check(System.Windows.Automation.AutomationProperties.GetHelpText(download).Contains("Скачивает")
+            && System.Windows.Controls.ToolTipService.GetShowOnDisabled(download), "download tooltip explains the action even when disabled");
         Capture(window, "preview-update-controls.png");
         var buttonContent = (System.Windows.Controls.StackPanel)download.Content;
         var label = (System.Windows.Controls.TextBlock)buttonContent.Children[1];

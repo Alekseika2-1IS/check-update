@@ -117,22 +117,42 @@ namespace UpdateHub
             subtitle.Margin = new Thickness(0, 6, 0, 16);
             body.Children.Add(subtitle);
             body.Children.Add(detail);
-            var explanation = Label(note, 12, "#B1C0D4");
-            explanation.Margin = new Thickness(0, 14, 0, 18);
-            body.Children.Add(explanation);
+            if (note != null)
+            {
+                var explanation = Label(note, 12, "#B1C0D4");
+                explanation.Margin = new Thickness(0, 14, 0, 18);
+                body.Children.Add(explanation);
+            }
 
             var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
             var cancel = new Button { Content = dismiss, IsCancel = true, Margin = new Thickness(0, 0, 8, 0), MinWidth = 88 };
+            ApplyButtonHelp(cancel, dismiss);
             cancel.Click += (s, e) => dialog.DialogResult = false;
-            var confirm = new Button
-            {
-                Content = action, IsDefault = true, MinWidth = 116,
-                Background = Paint("#78D9ED"), BorderBrush = Paint("#78D9ED"), Foreground = Paint("#102332")
-            };
-            confirm.SetResourceReference(StyleProperty, "AnimatedButton");
-            confirm.Click += (s, e) => dialog.DialogResult = true;
             actions.Children.Add(cancel);
-            actions.Children.Add(confirm);
+            if (action == null)
+            {
+                cancel.IsDefault = true;
+                cancel.Margin = new Thickness(0);
+                actions.Margin = new Thickness(0, 14, 0, 0);
+            }
+            else
+            {
+                var confirm = new Button
+                {
+                    Content = action, IsDefault = true, MinWidth = 116,
+                    Background = Paint("#78D9ED"), BorderBrush = Paint("#78D9ED"), Foreground = Paint("#102332")
+                };
+                confirm.SetResourceReference(StyleProperty, "AnimatedButton");
+                ApplyButtonHelp(confirm, action);
+                if (action == "Перезапустить")
+                {
+                    const string restartHelp = "Закрывает Check Update, применяет скачанное обновление и запускает приложение снова.";
+                    confirm.ToolTip = restartHelp;
+                    System.Windows.Automation.AutomationProperties.SetHelpText(confirm, restartHelp);
+                }
+                confirm.Click += (s, e) => dialog.DialogResult = true;
+                actions.Children.Add(confirm);
+            }
             body.Children.Add(actions);
             var surface = new Border { Background = Background, Child = body };
             dialog.Content = surface;

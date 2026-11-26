@@ -104,12 +104,12 @@ namespace UpdateHub
             else
             {
                 maintenanceSystem.Text = maintenanceRecovery.Name + " — " + (maintenanceRecovery.Detail ?? maintenanceRecovery.Result);
-                maintenanceAction.ToolTip = maintenanceSystem.Text;
                 if (maintenanceSystem.Text.Length > 160) maintenanceSystem.Text = maintenanceSystem.Text.Substring(0, 157) + "…";
             }
             maintenanceAction.Content = action;
-            if (maintenanceRecovery == null)
-                maintenanceAction.ToolTip = action.Length > 0 ? "Обновления Windows и драйверы NVIDIA устанавливаются отдельно." : null;
+            ApplyButtonHelp(maintenanceAction, action);
+            if (maintenanceRecovery != null)
+                maintenanceAction.ToolTip += Environment.NewLine + maintenanceRecovery.Name + " — " + (maintenanceRecovery.Detail ?? maintenanceRecovery.Result);
             maintenanceAction.Visibility = action.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
             maintenanceAction.IsEnabled = !busy && !downloadingApp;
         }

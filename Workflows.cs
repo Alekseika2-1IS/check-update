@@ -70,6 +70,7 @@ namespace UpdateHub
         private Button WorkflowButton(string name, Func<Task> action)
         {
             var button = new Button { Content = name, FontSize = 11, Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 0, 0, 5) };
+            ApplyButtonHelp(button, name);
             button.Click += async (s, e) =>
             {
                 if (!busy && !downloadingApp && !workflowDialogOpen) await action();
@@ -197,7 +198,8 @@ namespace UpdateHub
         private void RefreshScheduleStatus(string time)
         {
             scheduleButton.Content = time == null ? "Расписание обновлений" : "Расписание · " + time;
-            scheduleButton.ToolTip = time == null ? "Расписание выключено." : "Ежедневно в " + time + ", пока Check Update открыт.";
+            ApplyButtonHelp(scheduleButton, "Расписание обновлений");
+            scheduleButton.ToolTip += time == null ? " Сейчас выключено." : " Сейчас выбрано " + time + ".";
         }
 
         internal static bool IsScheduleDue(DateTime now, string time, string lastDay)
